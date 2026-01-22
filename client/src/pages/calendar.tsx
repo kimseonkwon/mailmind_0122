@@ -12,6 +12,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { 
   Calendar as CalendarIcon, 
   MapPin, 
@@ -108,25 +110,71 @@ function EventCard({ event, onClick }: { event: CalendarEvent; onClick: () => vo
   );
 }
 
+interface UserProfile {
+  email: string;
+  shipNumbers: string;
+}
+
 export default function CalendarPage() {
   const [selectedEvent, setSelectedEvent] = useState<CalendarEvent | null>(null);
   const [selectedDate, setSelectedDate] = useState<Date>(new Date());
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('calendar');
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set());
+  const [selectedShips, setSelectedShips] = useState<Set<string>>(new Set());
+  const [filterMyShips, setFilterMyShips] = useState(false);
 
   const { data: events, isLoading } = useQuery<CalendarEvent[]>({
     queryKey: ["/api/events"],
   });
 
+  const { data: ships } = useQuery<string[]>({
+    queryKey: ["/api/events/ships"],
+  });
+
+  const { data: userProfile } = useQuery<UserProfile>({
+    queryKey: ["/api/settings/profile"],
+  });
+
   const filteredEvents = useMemo(() => {
     if (!events) return [];
-    if (selectedCategories.size === 0) return events;
+    
+    let filtered = events;
 
-    return events.filter(event => {
-      const category = getEventCategory(event.title);
-      return selectedCategories.has(category.keyword);
-    });
-  }, [events, selectedCategories]);
+    // 카테고리 필터
+    if (selectedCategories.size > 0) {
+      filtered = filtered.filter(event => {
+        const category = getEventCategory(event.title);
+        return selectedCategories.has(category.keyword);
+      });
+    }
+
+    // 호선 필터
+    if (selectedShips.size > 0) {
+      filtered = filtered.filter(event => {
+        if (!event.shipNumber) return false;
+        const eventShips = event.shipNumber.split(',').map(s => s.trim());
+        return eventShips.some(ship => selectedShips.has(ship));
+      });
+    }
+
+    // 담당 호선 필터
+    if (filterMyShips && userProfile?.shipNumbers) {
+      const myShips = userProfile.shipNumbers
+        .split(',')
+        .map(s => s.trim())
+        .filter(s => s.length > 0);
+      
+      filtered = filtered.filter(event => {
+        if (!event.shipNumber) return false;
+        const eventShips = event.shipNumber.split(',').map(s => s.trim());
+        return eventShips.some(ship => 
+          myShips.some(myShip => ship.toLowerCase().includes(myShip.toLowerCase()))
+        );
+      });
+    }
+
+    return filtered;
+  }, [events, selectedCategories, selectedShips, filterMyShips, userProfile]);
 
   const eventsByDate = useMemo(() => {
     const map = new Map<string, CalendarEvent[]>();
@@ -157,6 +205,18 @@ export default function CalendarPage() {
         newSet.delete(keyword);
       } else {
         newSet.add(keyword);
+      }
+      return newSet;
+    });
+  };
+
+  const toggleShip = (ship: string) => {
+    setSelectedShips(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(ship)) {
+        newSet.delete(ship);
+      } else {
+        newSet.add(ship);
       }
       return newSet;
     });
@@ -195,6 +255,16 @@ export default function CalendarPage() {
                 <Eye className="h-4 w-4" />
                 전체 목록
               </Button>
+              <div className="flex items-center gap-2 ml-2">
+                <Switch 
+                  id="filter-my-ships-calendar" 
+                  checked={filterMyShips}
+                  onCheckedChange={setFilterMyShips}
+                />
+                <Label htmlFor="filter-my-ships-calendar" className="cursor-pointer text-sm">
+                  담당 호선
+                </Label>
+              </div>
               <Button
                 variant={viewMode === 'calendar' ? 'default' : 'outline'}
                 size="default"
@@ -238,6 +308,44 @@ export default function CalendarPage() {
                 );
               })}
             </div>
+
+            {ships && ships.length > 0 && (
+              <>
+                <div className="mt-6 pt-6 border-t">
+                  <h3 className="font-semibold text-base mb-3">호선</h3>
+                  <div className="flex flex-wrap gap-2">
+                    {ships.map((ship) => {
+                      const isSelected = selectedShips.has(ship);
+                      const isActive = selectedShips.size === 0 || isSelected;
+                      
+                      return (
+                        <button
+                          key={ship}
+                          onClick={() => toggleShip(ship)}
+                          className={`px-3 py-1.5 text-sm font-medium rounded-md border-2 transition-all ${
+                            isActive
+                              ? 'border-primary bg-primary text-primary-foreground'
+                              : 'border-muted bg-muted opacity-30 hover:opacity-50'
+                          }`}
+                        >
+                          {ship}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {selectedShips.size > 0 && (
+                    <div className="mt-3">
+                      <button
+                        onClick={() => setSelectedShips(new Set())}
+                        className="text-xs text-muted-foreground hover:text-foreground transition-colors underline"
+                      >
+                        전체 호선 보기
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
             {selectedCategories.size > 0 && (
               <div className="mt-3 pt-3 border-t">
                 <button

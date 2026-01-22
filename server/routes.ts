@@ -1130,6 +1130,28 @@ __EMAIL_META__
     }
   });
 
+  // 호선 목록 조회 API (이벤트에서 추출)
+  app.get("/api/events/ships", async (_req: Request, res: Response) => {
+    try {
+      const events = await storage.getCalendarEvents();
+      const shipSet = new Set<string>();
+      
+      for (const event of events) {
+        if (event.shipNumber) {
+          // 쉼표로 구분된 호선이 있을 수 있으므로 분리
+          const ships = event.shipNumber.split(',').map(s => s.trim()).filter(s => s.length > 0);
+          ships.forEach(ship => shipSet.add(ship));
+        }
+      }
+      
+      const shipList = Array.from(shipSet).sort();
+      res.json(shipList);
+    } catch (error) {
+      console.error("Get ships error:", error);
+      res.status(500).json({ error: "호선 목록을 가져오는 중 오류가 발생했습니다." });
+    }
+  });
+
   app.get("/api/emails", async (req: Request, res: Response) => {
     try {
       const limit = parseInt(req.query.limit as string) || 100;
