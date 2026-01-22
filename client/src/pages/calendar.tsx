@@ -244,7 +244,18 @@ export default function CalendarPage() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                <Switch 
+                  id="filter-my-ships-calendar" 
+                  checked={filterMyShips}
+                  onCheckedChange={setFilterMyShips}
+                />
+                <Label htmlFor="filter-my-ships-calendar" className="cursor-pointer text-sm font-medium">
+                  담당 호선
+                </Label>
+              </div>
+              <div className="h-6 w-px bg-border" />
               <Button
                 variant={viewMode === 'list' ? 'default' : 'outline'}
                 size="default"
@@ -255,16 +266,6 @@ export default function CalendarPage() {
                 <Eye className="h-4 w-4" />
                 전체 목록
               </Button>
-              <div className="flex items-center gap-2 ml-2">
-                <Switch 
-                  id="filter-my-ships-calendar" 
-                  checked={filterMyShips}
-                  onCheckedChange={setFilterMyShips}
-                />
-                <Label htmlFor="filter-my-ships-calendar" className="cursor-pointer text-sm">
-                  담당 호선
-                </Label>
-              </div>
               <Button
                 variant={viewMode === 'calendar' ? 'default' : 'outline'}
                 size="default"
@@ -308,54 +309,56 @@ export default function CalendarPage() {
                 );
               })}
             </div>
-
-            {ships && ships.length > 0 && (
-              <>
-                <div className="mt-6 pt-6 border-t">
-                  <h3 className="font-semibold text-base mb-3">호선</h3>
-                  <div className="flex flex-wrap gap-2">
-                    {ships.map((ship) => {
-                      const isSelected = selectedShips.has(ship);
-                      const isActive = selectedShips.size === 0 || isSelected;
-                      
-                      return (
-                        <button
-                          key={ship}
-                          onClick={() => toggleShip(ship)}
-                          className={`px-3 py-1.5 text-sm font-medium rounded-md border-2 transition-all ${
-                            isActive
-                              ? 'border-primary bg-primary text-primary-foreground'
-                              : 'border-muted bg-muted opacity-30 hover:opacity-50'
-                          }`}
-                        >
-                          {ship}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  {selectedShips.size > 0 && (
-                    <div className="mt-3">
-                      <button
-                        onClick={() => setSelectedShips(new Set())}
-                        className="text-xs text-muted-foreground hover:text-foreground transition-colors underline"
-                      >
-                        전체 호선 보기
-                      </button>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
             {selectedCategories.size > 0 && (
-              <div className="mt-3 pt-3 border-t">
+              <div className="mt-3">
                 <button
                   onClick={() => setSelectedCategories(new Set())}
                   className="text-xs text-muted-foreground hover:text-foreground transition-colors underline"
                 >
-                  전체 보기
+                  전체 범례 보기
                 </button>
               </div>
             )}
+
+            <div className="mt-6 pt-6 border-t">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-semibold text-base">호선</h3>
+                {selectedShips.size > 0 && (
+                  <button
+                    onClick={() => setSelectedShips(new Set())}
+                    className="text-xs text-muted-foreground hover:text-foreground transition-colors underline"
+                  >
+                    전체 보기
+                  </button>
+                )}
+              </div>
+              {ships && ships.length > 0 ? (
+                <div className="flex flex-wrap gap-2">
+                  {ships.map((ship) => {
+                    const isSelected = selectedShips.has(ship);
+                    const isActive = selectedShips.size === 0 || isSelected;
+                    
+                    return (
+                      <button
+                        key={ship}
+                        onClick={() => toggleShip(ship)}
+                        className={`px-4 py-2 text-sm font-medium rounded-lg border-2 transition-all ${
+                          isActive
+                            ? 'border-primary bg-primary text-primary-foreground shadow-sm'
+                            : 'border-border bg-background text-muted-foreground opacity-40 hover:opacity-70'
+                        }`}
+                      >
+                        {ship}
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  이메일에서 추출된 호선이 없습니다. 일정을 추가하면 자동으로 호선이 표시됩니다.
+                </p>
+              )}
+            </div>
           </CardContent>
         </Card>
 
