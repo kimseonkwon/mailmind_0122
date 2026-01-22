@@ -22,17 +22,10 @@ import {
   Users,
   CheckSquare,
   Bell,
-  Reply,
   Copy,
   X,
   Trash2
 } from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -49,13 +42,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import type { AiChatResponse, Conversation, Message, Email } from "@shared/schema";
 
 interface OllamaStatus {
@@ -72,11 +58,6 @@ interface ClassificationStats {
   unclassified: number;
 }
 
-interface DraftReplyResponse {
-  draft: string;
-  emailId: number;
-  originalSubject: string;
-}
 
 function ChatMessage({ 
   message, 
@@ -193,9 +174,6 @@ export default function ChatPage() {
   const { toast } = useToast();
   const [input, setInput] = useState("");
   const [currentConversationId, setCurrentConversationId] = useState<number | null>(null);
-  const [showDraftDialog, setShowDraftDialog] = useState(false);
-  const [selectedEmailId, setSelectedEmailId] = useState<string>("");
-  const [draftReply, setDraftReply] = useState<string>("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const [expandedMessages, setExpandedMessages] = useState<Set<number>>(new Set());
   const [optimisticMessage, setOptimisticMessage] = useState<string | null>(null);
@@ -218,27 +196,6 @@ export default function ChatPage() {
 
   const { data: classificationStats } = useQuery<ClassificationStats>({
     queryKey: ["/api/emails/classification-stats"],
-  });
-
-  const { data: emails } = useQuery<Email[]>({
-    queryKey: ["/api/emails"],
-  });
-
-  const draftMutation = useMutation({
-    mutationFn: async (emailId: number) => {
-      const response = await apiRequest("POST", "/api/ai/draft-reply", { emailId });
-      return response.json() as Promise<DraftReplyResponse>;
-    },
-    onSuccess: (data) => {
-      setDraftReply(data.draft);
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "오류",
-        description: error.message || "회신 초안 생성 중 오류가 발생했습니다.",
-        variant: "destructive",
-      });
-    },
   });
 
   const chatMutation = useMutation({
@@ -333,20 +290,6 @@ export default function ChatPage() {
     queryClient.invalidateQueries({ queryKey: ["/api/conversations"] });
   };
 
-  const handleGenerateDraft = () => {
-    if (!selectedEmailId) return;
-    setDraftReply("");
-    draftMutation.mutate(parseInt(selectedEmailId));
-  };
-
-  const handleCopyDraft = () => {
-    navigator.clipboard.writeText(draftReply);
-    toast({
-      title: "복사됨",
-      description: "회신 초안이 클립보드에 복사되었습니다.",
-    });
-  };
-
   return (
     <div className="min-h-screen bg-background flex flex-col">
       <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur-lg supports-[backdrop-filter]:bg-background/60 shadow-sm">
@@ -362,17 +305,6 @@ export default function ChatPage() {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <Button 
-                variant="outline" 
-                size="default"
-                onClick={() => setShowDraftDialog(true)}
-                disabled={!ollamaStatus?.connected || !emails?.length}
-                data-testid="button-open-draft"
-                className="gap-2"
-              >
-                <Reply className="h-4 w-4" />
-                회신 초안 생성
-              </Button>
               <Badge variant={ollamaStatus?.connected ? "default" : "destructive"} className="gap-2 px-3 py-1.5 font-medium">
                 {ollamaStatus?.connected ? (
                   <>
@@ -548,67 +480,6 @@ export default function ChatPage() {
         </div>
       </main>
 
-      <Dialog open={showDraftDialog} onOpenChange={setShowDraftDialog}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Reply className="h-5 w-5" />
-              회신 초안 생성
-            </DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4 flex-1 overflow-hidden flex flex-col">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">이메일 선택</label>
-              <Select value={selectedEmailId} onValueChange={setSelectedEmailId}>
-                <SelectTrigger data-testid="select-email">
-                  <SelectValue placeholder="회신할 이메일을 선택하세요" />
-                </SelectTrigger>
-                <SelectContent>
-                  {emails?.map(email => (
-                    <SelectItem key={email.id} value={email.id.toString()}>
-                      {email.subject}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            
-            <Button 
-              onClick={handleGenerateDraft}
-              disabled={!selectedEmailId || draftMutation.isPending}
-              data-testid="button-generate-draft"
-            >
-              {draftMutation.isPending ? (
-                <>
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  생성 중...
-                </>
-              ) : (
-                <>
-                  <Reply className="h-4 w-4 mr-2" />
-                  초안 생성
-                </>
-              )}
-            </Button>
-
-            {draftReply && (
-              <div className="flex-1 overflow-hidden flex flex-col space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-sm font-medium">생성된 회신 초안</label>
-                  <Button variant="ghost" size="sm" onClick={handleCopyDraft} data-testid="button-copy-draft">
-                    <Copy className="h-4 w-4 mr-2" />
-                    복사
-                  </Button>
-                </div>
-                <ScrollArea className="flex-1 border rounded-lg p-4 bg-muted/30">
-                  <p className="text-sm whitespace-pre-wrap" data-testid="text-draft-reply">{draftReply}</p>
-                </ScrollArea>
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
-
       <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -630,4 +501,9 @@ export default function ChatPage() {
       </AlertDialog>
     </div>
   );
+}
+
+interface AiChatResponse {
+  message: string;
+  conversationId: number;
 }
