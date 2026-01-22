@@ -1,0 +1,1385 @@
+import type { Express, Request, Response } from "express";
+import { createServer, type Server } from "http";
+import { storage } from "./storage";
+import multer from "multer";
+import * as path from "path";
+import * as fs from "fs";
+import { 
+  chatRequestSchema, 
+  aiChatRequestSchema,
+  eventExtractionRequestSchema,
+  updateUserProfileSchema,
+  type ChatResponse, 
+  type ImportResult, 
+  type SearchResult,
+  type AiChatResponse,
+  type EventExtractionResponse
+} from "@shared/schema";
+import { ZodError } from "zod";
+import { generateEmbedding, normalizeQuestionForRag } from "./ollama";
+
+import { chatWithOllama, extractEventsFromEmail, checkOllamaConnection, classifyEmail, generateEmailChunks, getShipbuildingSystemPrompt } from "./ollama";
+import { parsePSTFromBuffer } from "./pst-parser";
+import { parseEMLFromBuffer } from "./eml-parser";
+import AdmZip from "adm-zip";
+
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 1024 * 1024 * 1024 }
+});
+
+function parseEmailsFromJson(content: string): Array<{
+  subject: string;
+  sender: string;
+  date: string;
+  body: string;
+  importance?: string;
+  label?: string;
+}> {
+  try {
+    const data = JSON.parse(content);
+    const emails = Array.isArray(data) ? data : (data.emails || []);
+    
+    return emails.map((email: Record<string, unknown>) => ({
+      subject: String(email.subject || email.Subject || ""),
+      sender: String(email.sender || email.from || email.From || ""),
+      date: String(email.date || email.Date || email.sent_date || ""),
+      body: String(email.body || email.content || email.text || email.Body || ""),
+      importance: email.importance ? String(email.importance) : undefined,
+      label: email.label ? String(email.label) : undefined,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function generateSampleEmails(): Array<{
+  subject: string;
+  sender: string;
+  date: string;
+  body: string;
+}> {
+  return [
+    {
+      subject: "프로젝트 진행 상황 보고",
+      sender: "김철수 <kim@example.com>",
+      date: "2025-01-05 09:30:00",
+      body: "안녕하세요, 프로젝트 진행 상황을 보고드립니다. 현재 1차 개발 단계가 완료되었으며, 다음 주 월요일부터 2차 개발에 착수할 예정입니다. 테스트 일정도 조율 중이오니 참고 부탁드립니다.",
+    },
+    {
+      subject: "회의 일정 안내",
+      sender: "박영희 <park@example.com>",
+      date: "2025-01-06 14:00:00",
+      body: "다음 주 화요일 오후 2시에 정기 회의가 예정되어 있습니다. 회의실 A에서 진행되며, 주요 안건은 분기별 실적 검토와 향후 계획 수립입니다. 참석 여부를 회신해 주세요.",
+    },
+    {
+      subject: "견적서 요청의 건",
+      sender: "이민수 <lee@example.com>",
+      date: "2025-01-04 11:15:00",
+      body: "안녕하세요, 제안서에 언급된 시스템 구축 비용에 대한 상세 견적서를 요청드립니다. 예산 검토를 위해 가능한 빨리 회신 부탁드리며, 항목별 세부 내역도 함께 보내주시면 감사하겠습니다.",
+    },
+    {
+      subject: "서버 점검 공지",
+      sender: "시스템관리자 <admin@example.com>",
+      date: "2025-01-07 08:00:00",
+      body: "금일 오후 10시부터 내일 오전 6시까지 서버 정기 점검이 진행됩니다. 해당 시간 동안 시스템 접속이 불가하오니 양해 부탁드립니다. 중요한 작업은 점검 전 완료해 주시기 바랍니다.",
+    },
+    {
+      subject: "교육 참석 안내",
+      sender: "인사팀 <hr@example.com>",
+      date: "2025-01-03 16:45:00",
+      body: "신규 시스템 사용법 교육이 다음 주 수요일에 진행됩니다. 대상자는 각 부서 담당자이며, 교육 시간은 오전 10시부터 12시까지입니다. 교육장 위치는 본관 3층 대회의실입니다.",
+    },
+    {
+      subject: "계약서 검토 요청",
+      sender: "법무팀 <legal@example.com>",
+      date: "2025-01-02 10:30:00",
+      body: "첨부된 계약서 초안을 검토해 주시기 바랍니다. 수정 사항이나 의견이 있으시면 금주 금요일까지 회신 부탁드립니다. 계약 체결 일정이 촉박하오니 신속한 검토 부탁드립니다.",
+    },
+    {
+      subject: "월간 보고서 제출 안내",
+      sender: "경영지원팀 <support@example.com>",
+      date: "2025-01-01 09:00:00",
+      body: "1월 월간 보고서 제출 마감일은 1월 10일입니다. 각 부서별 실적 및 향후 계획을 포함하여 작성해 주시기 바랍니다. 보고서 양식은 공유 폴더에서 다운로드 가능합니다.",
+    },
+    {
+      subject: "출장 경비 정산 안내",
+      sender: "재무팀 <finance@example.com>",
+      date: "2025-01-06 13:20:00",
+      body: "지난달 출장 경비 정산을 위해 영수증 원본과 정산서를 제출해 주세요. 제출 마감은 이번 주 금요일이며, 지연 시 다음 달로 이월됩니다. 문의사항은 재무팀으로 연락 바랍니다.",
+    },
+  ];
+}
+
+export async function registerRoutes(
+  httpServer: Server,
+  app: Express
+): Promise<Server> {
+  
+  app.get("/api/stats", async (_req: Request, res: Response) => {
+    try {
+      const stats = await storage.getStats();
+      res.json(stats);
+    } catch (error) {
+      console.error("Stats error:", error);
+      res.status(500).json({ error: "Failed to get stats" });
+    }
+  });
+
+  app.post("/api/import", upload.single("file"), async (req: Request, res: Response) => {
+    console.log("\n========================================");
+    console.log("📥 파일 업로드 요청 받음");
+    console.log("========================================");
+    
+    try {
+      const file = req.file;
+      console.log("파일 정보:", file ? {
+        originalname: file.originalname,
+        size: file.size,
+        mimetype: file.mimetype
+      } : "파일 없음");
+      
+      let emailsToImport: Array<{
+        subject: string;
+        sender: string;
+        date: string;
+        body: string;
+        importance?: string;
+        label?: string;
+        attachments?: any;
+      }> = [];
+      let filename = "sample_data";
+
+      if (file) {
+        filename = file.originalname;
+        const ext = filename.toLowerCase().split(".").pop();
+        const mimeType = file.mimetype.toLowerCase();
+        console.log(`파일 확장자: ${ext}, MIME 타입: ${mimeType}`);
+
+        if (ext === "json") {
+          console.log("JSON 파일 파싱 시작...");
+          const content = file.buffer.toString("utf-8");
+          emailsToImport = parseEmailsFromJson(content);
+          console.log(`JSON에서 ${emailsToImport.length}개 이메일 파싱됨`);
+        } else if (ext === "pst") {
+          console.log("PST 파일 파싱 시작...");
+          const parseResult = await parsePSTFromBuffer(file.buffer, filename);
+          console.log(`PST 파싱 결과: ${parseResult.emails.length}개 이메일, ${parseResult.errors.length}개 오류`);
+          
+          if (parseResult.errors.length > 0 && parseResult.emails.length === 0) {
+            console.error("PST 파싱 완전 실패:", parseResult.errors);
+            res.status(400).json({
+              ok: false,
+              inserted: 0,
+              message: `PST 파일 파싱 오류: ${parseResult.errors.join(", ")}`,
+            });
+            return;
+          }
+          emailsToImport = parseResult.emails;
+        } else if (ext === "eml") {
+          console.log("EML 파일 파싱 시작...");
+          const parseResult = await parseEMLFromBuffer(file.buffer, filename);
+          console.log(`EML 파싱 결과: ${parseResult.emails.length}개 이메일, ${parseResult.errors.length}개 오류`);
+          
+          if (parseResult.errors.length > 0 && parseResult.emails.length === 0) {
+            console.error("EML 파싱 실패:", parseResult.errors);
+            res.status(400).json({
+              ok: false,
+              inserted: 0,
+              message: `EML 파일 파싱 오류: ${parseResult.errors.join(", ")}`,
+            });
+            return;
+          }
+          emailsToImport = parseResult.emails;
+        } else if (ext === "zip" || mimeType.includes("zip")) {
+          console.log("ZIP 파일 압축 해제 시작...");
+          try {
+            const zip = new AdmZip(file.buffer);
+            const zipEntries = zip.getEntries();
+            const emlFiles = zipEntries.filter(entry => 
+              !entry.isDirectory && entry.entryName.toLowerCase().endsWith('.eml')
+            );
+            
+            console.log(`ZIP 파일에서 ${emlFiles.length}개 EML 파일 발견`);
+            
+            const allEmails: typeof emailsToImport = [];
+            const errors: string[] = [];
+            
+            for (const entry of emlFiles) {
+              try {
+                const buffer = entry.getData();
+                const parseResult = await parseEMLFromBuffer(buffer, entry.entryName);
+                
+                if (parseResult.emails.length > 0) {
+                  allEmails.push(...parseResult.emails);
+                }
+                if (parseResult.errors.length > 0) {
+                  errors.push(...parseResult.errors);
+                }
+              } catch (err) {
+                const errMsg = err instanceof Error ? err.message : "Unknown error";
+                errors.push(`${entry.entryName} 파싱 오류: ${errMsg}`);
+              }
+            }
+            
+            console.log(`ZIP 처리 완료: ${allEmails.length}개 이메일 파싱, ${errors.length}개 오류`);
+            
+            if (allEmails.length === 0) {
+              res.status(400).json({
+                ok: false,
+                inserted: 0,
+                message: `ZIP 파일에서 이메일을 찾을 수 없습니다. ${errors.length > 0 ? '오류: ' + errors.slice(0, 3).join(', ') : ''}`,
+              });
+              return;
+            }
+            
+            emailsToImport = allEmails;
+            if (errors.length > 0) {
+              console.warn(`경고: ${errors.length}개 파일 처리 중 오류 발생`);
+            }
+          } catch (err) {
+            const errMsg = err instanceof Error ? err.message : "Unknown error";
+            console.error("ZIP 파일 처리 오류:", errMsg);
+            res.status(400).json({
+              ok: false,
+              inserted: 0,
+              message: `ZIP 파일 처리 오류: ${errMsg}`,
+            });
+            return;
+          }
+        } else if (ext === "mbox") {
+          res.status(400).json({
+            ok: false,
+            inserted: 0,
+            message: "MBOX 파일은 현재 지원되지 않습니다. PST, EML, ZIP 또는 JSON 형식을 사용해 주세요.",
+          });
+          return;
+        } else {
+          res.status(400).json({
+            ok: false,
+            inserted: 0,
+            message: "지원되지 않는 파일 형식입니다. PST, EML, ZIP 또는 JSON 파일을 사용해 주세요.",
+          });
+          return;
+        }
+      } else {
+        emailsToImport = generateSampleEmails();
+        filename = "sample_demo_data";
+      }
+
+      if (emailsToImport.length === 0) {
+        console.log("⚠️ 파일에서 이메일을 찾을 수 없음");
+        res.status(400).json({
+          ok: false,
+          inserted: 0,
+          message: "파일에서 이메일을 찾을 수 없습니다.",
+        });
+        return;
+      }
+
+      console.log(`\n📧 ${emailsToImport.length}개 이메일 DB에 저장 시작...`);
+      const insertedEmails = await storage.insertEmailsAndGetIds(emailsToImport);
+      const insertedCount = insertedEmails.length;
+      console.log(`✅ ${insertedCount}개 이메일 저장 완료`);
+      
+      // 첨부파일 저장
+      let attachmentsSavedCount = 0;
+      const attachmentsDir = path.join(storage.getDataDir(), 'attachments');
+      if (!fs.existsSync(attachmentsDir)) {
+        fs.mkdirSync(attachmentsDir, { recursive: true });
+      }
+      
+      for (let i = 0; i < emailsToImport.length; i++) {
+        const emailData = emailsToImport[i];
+        const savedEmail = insertedEmails[i];
+        
+        if (emailData.attachments && emailData.attachments.length > 0) {
+          console.log(`📎 이메일 ${savedEmail.id}: ${emailData.attachments.length}개 첨부파일 처리 중...`);
+          
+          for (const att of emailData.attachments) {
+            try {
+              // 임시 파일을 영구 저장소로 복사
+              const destPath = path.join(attachmentsDir, att.storedName);
+              
+              // 원본 파일이 존재하는지 확인
+              if (fs.existsSync(att.relPath)) {
+                fs.copyFileSync(att.relPath, destPath);
+                
+                // DB에 상대 경로만 저장
+                await storage.addEmailAttachment({
+                  emailId: savedEmail.id,
+                  filename: att.storedName,
+                  relPath: att.storedName, // 파일명만 저장
+                  size: att.size || 0,
+                  mime: att.mime || 'application/octet-stream',
+                  originalName: att.originalName,
+                });
+                attachmentsSavedCount++;
+                console.log(`  ✓ ${att.originalName} 저장됨`);
+              } else {
+                console.error(`  ✗ 파일을 찾을 수 없음: ${att.relPath}`);
+              }
+            } catch (err) {
+              console.error(`첨부파일 저장 오류 (${att.originalName}):`, err);
+            }
+          }
+        }
+      }
+      
+      if (attachmentsSavedCount > 0) {
+        console.log(`✅ 총 ${attachmentsSavedCount}개 첨부파일 저장 완료`);
+      } else {
+        console.log(`⚠️ 저장된 첨부파일이 없습니다.`);
+      }
+      
+      await storage.logImport({
+        filename,
+        emailsImported: insertedCount,
+      });
+
+      let classifiedCount = 0;
+      let eventsExtractedCount = 0;
+      let embeddedCount = 0;
+
+      const ollamaConnected = await checkOllamaConnection();
+      console.log(`\n🤖 Ollama 연결 상태: ${ollamaConnected ? "연결됨" : "연결 안됨"}`);
+      
+      if (ollamaConnected) {
+        console.log("\n📊 이메일 분류 및 처리 시작...");
+        for (const email of insertedEmails) {
+          try {
+            const classification = await classifyEmail(email.subject, email.body, email.sender);
+            await storage.updateEmailClassification(email.id, classification.classification, classification.confidence);
+            classifiedCount++;
+
+            const events = await extractEventsFromEmail(email.subject, email.body, email.date);
+            for (const event of events) {
+              if (!event.title || !event.startDate) {
+                console.log(`Skipping invalid event for email ${email.id}: missing title or startDate`);
+                continue;
+              }
+              try {
+                await storage.addCalendarEvent({
+                  emailId: email.id,
+                  title: event.title,
+                  startDate: event.startDate,
+                  endDate: event.endDate || null,
+                  location: event.location || null,
+                  description: event.description || null,
+                });
+                eventsExtractedCount++;
+              } catch (eventErr) {
+                console.error(`Failed to add calendar event for email ${email.id}:`, eventErr);
+              }
+            }
+
+            let bodyWithPdf = email.body;
+            const emailFromImport = emailsToImport.find(e => e.subject === email.subject && e.sender === email.sender && e.date === email.date);
+            if (emailFromImport?.attachments) {
+              const pdfTexts = emailFromImport.attachments
+                .filter(att => att.pdfText)
+                .map(att => `\n\n[첨부파일: ${att.originalName}]\n${att.pdfText}`)
+                .join('');
+              if (pdfTexts) {
+                bodyWithPdf += pdfTexts;
+              }
+            }
+
+            const emailChunks = await generateEmailChunks(
+              email.id, 
+              email.subject, 
+              email.sender, 
+              email.date, 
+              bodyWithPdf
+            );
+            
+            if (emailChunks.length > 0) {
+              const chunksToSave = emailChunks.map((chunk, idx) => ({
+                emailId: email.id,
+                chunkIndex: idx,
+                content: chunk.content,
+                embedding: JSON.stringify(chunk.embedding),
+              }));
+              await storage.saveRagChunks(chunksToSave);
+              embeddedCount += emailChunks.length;
+            }
+
+            await storage.markEmailProcessed(email.id);
+          } catch (err) {
+            console.error(`Error processing email ${email.id}:`, err);
+          }
+        }
+        console.log(`\n✅ 처리 완료: ${classifiedCount}개 분류, ${eventsExtractedCount}개 일정, ${embeddedCount}개 임베딩`);
+      }
+
+      const result = {
+        ok: true,
+        inserted: insertedCount,
+        classified: classifiedCount,
+        eventsExtracted: eventsExtractedCount,
+        embedded: embeddedCount,
+        message: ollamaConnected 
+          ? `${insertedCount}개의 이메일을 가져왔습니다. ${classifiedCount}개 분류, ${eventsExtractedCount}개 일정 추출, ${embeddedCount}개 벡터 임베딩 완료.`
+          : `${insertedCount}개의 이메일을 가져왔습니다. AI 서버 미연결로 자동 처리가 건너뛰어졌습니다.`,
+      };
+
+      console.log("\n✨ 업로드 완료:", result);
+      console.log("========================================\n");
+      res.json(result);
+    } catch (error) {
+      console.error("\n❌ Import error:", error);
+      console.error("========================================\n");
+      res.status(500).json({
+        ok: false,
+        inserted: 0,
+        message: error instanceof Error ? error.message : "가져오기 중 오류가 발생했습니다.",
+      });
+    }
+  });
+
+  app.post("/api/search", async (req: Request, res: Response) => {
+    try {
+      const validationResult = chatRequestSchema.safeParse(req.body);
+      
+      if (!validationResult.success) {
+        const errors = validationResult.error.errors.map(e => e.message).join(", ");
+        res.status(400).json({ error: errors || "잘못된 요청입니다." });
+        return;
+      }
+
+      const { message, topK, filters } = validationResult.data;
+      const citations: SearchResult[] = await storage.searchEmails(message.trim(), topK, filters);
+
+      const topSubjects = citations
+        .slice(0, 10)
+        .map(c => `- ${c.subject} (점수=${c.score.toFixed(1)}, ID=${c.mailId})`)
+        .join("\n");
+
+      const answer = `검색어: ${message || "(빈 검색어)"}\n\nTop 결과:\n${topSubjects || "- (결과 없음)"}`;
+
+      const response: ChatResponse = {
+        answer,
+        citations,
+        debug: {
+          topK,
+          hitsCount: citations.length,
+        },
+      };
+
+      res.json(response);
+    } catch (error) {
+      console.error("Search error:", error);
+      if (error instanceof ZodError) {
+        res.status(400).json({ error: "잘못된 요청 형식입니다." });
+        return;
+      }
+      res.status(500).json({ error: "검색 중 오류가 발생했습니다." });
+    }
+  });
+
+  app.get("/api/ping", (_req: Request, res: Response) => {
+    res.json({
+      ok: true,
+      hint: "POST /api/import로 이메일 가져오기, /api/stats로 통계 확인, POST /api/search로 검색",
+    });
+  });
+
+  app.get("/api/ollama/status", async (_req: Request, res: Response) => {
+    try {
+      const connected = await checkOllamaConnection();
+      res.json({ connected, baseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434" });
+    } catch {
+      res.json({ connected: false, baseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434" });
+    }
+  });
+
+  app.get("/api/conversations", async (_req: Request, res: Response) => {
+    try {
+      const conversations = await storage.getConversations();
+      res.json(conversations);
+    } catch (error) {
+      console.error("Get conversations error:", error);
+      res.status(500).json({ error: "대화 목록을 가져오는 중 오류가 발생했습니다." });
+    }
+  });
+
+  app.get("/api/conversations/:id/messages", async (req: Request, res: Response) => {
+    try {
+      const conversationId = parseInt(req.params.id);
+      if (isNaN(conversationId)) {
+        res.status(400).json({ error: "잘못된 대화 ID입니다." });
+        return;
+      }
+      const messages = await storage.getMessages(conversationId);
+      res.json(messages);
+    } catch (error) {
+      console.error("Get messages error:", error);
+      res.status(500).json({ error: "메시지를 가져오는 중 오류가 발생했습니다." });
+    }
+  });
+
+  app.delete("/api/conversations/:id", async (req: Request, res: Response) => {
+    try {
+      const conversationId = parseInt(req.params.id);
+      if (isNaN(conversationId)) {
+        res.status(400).json({ error: "잘못된 대화 ID입니다." });
+        return;
+      }
+      await storage.deleteConversation(conversationId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Delete conversation error:", error);
+      res.status(500).json({ error: "대화를 삭제하는 중 오류가 발생했습니다." });
+    }
+  });
+
+  app.post("/api/ai/chat", async (req: Request, res: Response) => {
+  try {
+    const validationResult = aiChatRequestSchema.safeParse(req.body);
+
+    if (!validationResult.success) {
+      const errors = validationResult.error.errors.map(e => e.message).join(", ");
+      return res.status(400).json({ error: errors || "잘못된 요청입니다." });
+    }
+
+    const { message, conversationId } = validationResult.data;
+
+    /* =====================================================
+       0. 대화 ID 처리
+       ===================================================== */
+    let convId = conversationId;
+    if (!convId) {
+      const newConv = await storage.createConversation({
+        title: message.slice(0, 50),
+      });
+      convId = newConv.id;
+    }
+
+    await storage.addMessage({
+      conversationId: convId,
+      role: "user",
+      content: message,
+    });
+
+    /* =====================================================
+       1. 질문은 원본 그대로 사용 (정규화 비활성화)
+       ===================================================== */
+    const retrievalQuery = message;  // 원본 그대로
+    const llmQuestion = message;
+
+    // 검색어 토큰 (길이 2 이상) 추출
+    const queryTokens = Array.from(
+      new Set(
+        (retrievalQuery || "")
+          .split(/[^0-9A-Za-z가-힣-]+/)
+          .map(t => t.trim())
+          .filter(t => t.length >= 2)
+      )
+    );
+
+    /* =====================================================
+       ⭐ 1.5 일정/언제 질문 → events DB 우선 처리 (핵심)
+       ===================================================== */
+    const isScheduleQuestion = /언제|일정|날짜|시간/.test(message);
+
+    if (isScheduleQuestion) {
+      const events = await storage.searchEventsByKeyword(retrievalQuery);
+
+      if (events.length > 0) {
+        const answer = events
+          .slice(0, 3)
+          .map(e => {
+            const start = e.startDate;
+            const end = e.endDate ? ` ~ ${e.endDate}` : "";
+            return `- ${e.title}: ${start}${end}`;
+          })
+          .join("\n");
+
+        await storage.addMessage({
+          conversationId: convId,
+          role: "assistant",
+          content: answer,
+        });
+
+        return res.json({
+          response: answer,
+          conversationId: convId,
+        });
+      }
+      // events가 없으면 → 아래 RAG로 fallback
+    }
+
+    /* =====================================================
+       2. 하이브리드 RAG 검색 (벡터 + BM25 + Reranking)
+       ===================================================== */
+    let emailContext = "";
+    let bestHit: { body: string; date: string; subject?: string; sender?: string } | null = null;
+    
+    // 후보 청크 저장
+    interface RankedChunk {
+      content: string;
+      vectorScore: number;
+      bm25Score: number;
+      keywordMatches: number;
+      finalScore: number;
+      emailId?: number;
+    }
+    const candidates: RankedChunk[] = [];
+    
+    const VECTOR_MIN_SIM = 0.50; // 벡터 최소 유사도 (낮춰서 더 많이 수집)
+    const MIN_KEYWORD_MATCHES = 1; // 최소 키워드 매칭 개수
+    const MAX_CHUNKS = 3;
+
+    // Step 1: 벡터 검색 (항상 실행)
+    const vectorChunks = new Map<string, { content: string; similarity: number; emailId: number }>();
+    const ragChunkCount = await storage.getRagChunkCount();
+    if (ragChunkCount > 0) {
+      const queryEmbedding = await generateEmbedding(retrievalQuery);
+      if (queryEmbedding) {
+        const relevantChunks = await storage.searchRagChunks(queryEmbedding, 10);
+        for (const r of relevantChunks) {
+          if (r.similarity >= VECTOR_MIN_SIM) {
+            const key = r.chunk.content.slice(0, 100);
+            vectorChunks.set(key, {
+              content: r.chunk.content,
+              similarity: r.similarity,
+              emailId: r.chunk.emailId
+            });
+          }
+        }
+      }
+    }
+
+    // Step 2: BM25 검색 (항상 실행)
+    const bm25Chunks = new Map<string, { content: string; score: number; emailId: number }>();
+    const bm25Emails = await storage.searchEmailsBm25(retrievalQuery, 10);
+    for (const email of bm25Emails) {
+      // 이메일을 청크 형태로 변환
+      const chunkContent = `제목: ${email.subject}
+발신자: ${email.sender}
+날짜: ${email.date}
+
+[원문 일부]
+${email.body.slice(0, 800)}`;
+      const key = chunkContent.slice(0, 100);
+      bm25Chunks.set(key, {
+        content: chunkContent,
+        score: email.score,
+        emailId: parseInt(email.mailId) || 0
+      });
+    }
+
+    // Step 3: 후보 통합 및 Reranking
+    const allKeys = new Set([...vectorChunks.keys(), ...bm25Chunks.keys()]);
+    
+    for (const key of allKeys) {
+      const vectorData = vectorChunks.get(key);
+      const bm25Data = bm25Chunks.get(key);
+      
+      const content = vectorData?.content || bm25Data?.content || "";
+      const vectorScore = vectorData?.similarity || 0;
+      const bm25Score = bm25Data?.score || 0;
+      
+      // 키워드 매칭 점수 계산
+      let keywordMatches = 0;
+      const contentLower = content.toLowerCase();
+      for (const token of queryTokens) {
+        if (contentLower.includes(token.toLowerCase())) {
+          keywordMatches++;
+        }
+      }
+      
+      // 최종 점수 계산 (RRF 기반 + 키워드 부스트)
+      const vectorRank = vectorScore > 0 ? 1 / (vectorScore + 0.01) : 100;
+      const bm25Rank = bm25Score > 0 ? 1 / (bm25Score + 0.01) : 100;
+      const keywordBoost = keywordMatches * 2.0; // 키워드 매칭 중요도 높임
+      
+      const finalScore = (
+        (vectorScore * 0.3) + 
+        (bm25Score * 0.3) + 
+        keywordBoost
+      );
+      
+      candidates.push({
+        content,
+        vectorScore,
+        bm25Score,
+        keywordMatches,
+        finalScore,
+        emailId: vectorData?.emailId || bm25Data?.emailId
+      });
+    }
+
+    // Step 4: 점수순 정렬 및 필터링
+    candidates.sort((a, b) => b.finalScore - a.finalScore);
+    
+    // 키워드가 최소 1개 이상 매칭된 것만 선택
+    const topCandidates = candidates
+      .filter(c => c.keywordMatches >= MIN_KEYWORD_MATCHES || c.vectorScore >= 0.70)
+      .slice(0, MAX_CHUNKS);
+
+    // Step 5: 컨텍스트 생성
+    const contextItems: string[] = [];
+    for (const candidate of topCandidates) {
+      contextItems.push(
+        `[Hybrid Score: ${candidate.finalScore.toFixed(2)} | Vector: ${(candidate.vectorScore * 100).toFixed(0)}% | BM25: ${candidate.bm25Score.toFixed(2)} | Keywords: ${candidate.keywordMatches}/${queryTokens.length}]
+${candidate.content}`
+      );
+      
+      if (!bestHit) {
+        const dateMatch = candidate.content.match(/날짜:\s*([^\n]+)/);
+        const subjectMatch = candidate.content.match(/제목:\s*([^\n]+)/);
+        const senderMatch = candidate.content.match(/발신자:\s*([^\n]+)/);
+        const bodyPart = candidate.content.split("[원문 일부]")[1]?.trim() || "";
+        bestHit = {
+          emailId: candidate.emailId,
+          body: (bodyPart || candidate.content).slice(0, 400),
+          date: dateMatch ? dateMatch[1].trim() : "",
+          subject: subjectMatch ? subjectMatch[1].trim() : "",
+          sender: senderMatch ? senderMatch[1].trim() : "",
+        };
+      }
+    }
+
+    if (contextItems.length > 0) {
+      emailContext = contextItems.join("\n\n---\n\n");
+    }
+
+    /* =====================================================
+       🧪 RAG DEBUG 로그
+       ===================================================== */
+    console.log("[RAG DEBUG] retrievalQuery:", retrievalQuery);
+    console.log("[RAG DEBUG] queryTokens:", queryTokens);
+    console.log("[RAG DEBUG] vectorCandidates:", vectorChunks.size);
+    console.log("[RAG DEBUG] bm25Candidates:", bm25Chunks.size);
+    console.log("[RAG DEBUG] totalCandidates:", candidates.length);
+    console.log("[RAG DEBUG] topResults:", topCandidates.length);
+    if (topCandidates.length > 0) {
+      console.log("[RAG DEBUG] Top 3 scores:");
+      topCandidates.slice(0, 3).forEach((c, i) => {
+        console.log(`  ${i + 1}. Final:${c.finalScore.toFixed(2)} V:${(c.vectorScore * 100).toFixed(0)}% B:${c.bm25Score.toFixed(2)} KW:${c.keywordMatches}/${queryTokens.length}`);
+        console.log(`     ${c.content.slice(0, 80)}...`);
+      });
+    }
+    console.log("[RAG DEBUG] emailContextLen:", emailContext?.length || 0);
+
+    /* =====================================================
+       4.5 RAG 실패 시 LLM 호출 차단
+       ===================================================== */
+    if (!emailContext || emailContext.trim().length === 0) {
+      const noDataResponse =
+        "해당 질문과 관련된 이메일을 찾지 못했습니다.";
+
+      await storage.addMessage({
+        conversationId: convId,
+        role: "assistant",
+        content: noDataResponse,
+      });
+
+      return res.json({
+        response: noDataResponse,
+        conversationId: convId,
+      });
+    }
+
+    /* =====================================================
+       6. LLM 호출 (히스토리 ❌)
+       ===================================================== */
+    const systemPrompt = getShipbuildingSystemPrompt(emailContext);
+
+    const aiResponse = await chatWithOllama([
+      { role: "system", content: systemPrompt },
+      { role: "user", content: llmQuestion },
+    ]);
+
+    const koreanOnly = aiResponse
+      .replace(/[^가-힣0-9.,!?'"()\-:\s]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    const notFound = /(찾지 못했습니다|관련된 이메일을 찾지 못했습니다|찾을 수 없습니다|없습니다\.?$)/.test(
+      koreanOnly
+    );
+
+    const answerText = !emailContext || notFound
+      ? (bestHit?.body
+          ? `회의 일정으로 확인된 메일은 없었지만, 가장 가까운 일정 정보를 공유드려요: ${bestHit.body.replace(/\s+/g, " ")}`
+          : "관련 답변을 찾지 못했습니다")
+      : koreanOnly;
+
+    // 출처 정보는 간략하게만 추가 (선택적)
+    const sourceInfo = bestHit?.subject 
+      ? `\n\n(참고: "${bestHit.subject}" 메일 기준, ${bestHit.date})` 
+      : "";
+    
+    const formattedResponse = answerText + sourceInfo;
+
+    // 메시지 저장 시에는 메타데이터 포함
+    let messageWithMetadata = formattedResponse;
+    
+    if (bestHit && bestHit.subject) {
+      console.log("[DEBUG] bestHit found:", { 
+        emailId: bestHit.emailId, 
+        subject: bestHit.subject?.substring(0, 30),
+        hasBody: !!bestHit.body 
+      });
+      
+      messageWithMetadata = `${formattedResponse}
+__EMAIL_META__
+제목: ${bestHit.subject || "정보 없음"}
+발신자: ${bestHit.sender || "정보 없음"}
+본문: ${bestHit.body || "정보 없음"}
+날짜: ${bestHit.date || "정보 없음"}
+이메일ID: ${bestHit.emailId || ""}`;
+    } else {
+      console.log("[DEBUG] No bestHit or bestHit.subject");
+    }
+
+    await storage.addMessage({
+      conversationId: convId,
+      role: "assistant",
+      content: messageWithMetadata,
+    });
+
+    /* =====================================================
+       7. 응답
+       ===================================================== */
+    return res.json({
+      response: messageWithMetadata,
+      conversationId: convId,
+    });
+  } catch (error) {
+    console.error("AI chat error:", error);
+    return res.status(500).json({
+      error:
+        error instanceof Error
+          ? error.message
+          : "AI 채팅 중 오류가 발생했습니다.",
+    });
+  }
+});
+
+
+
+
+
+  app.post("/api/ai/draft-reply", async (req: Request, res: Response) => {
+    try {
+      const { emailId } = req.body;
+      
+      if (!emailId) {
+        res.status(400).json({ error: "이메일 ID가 필요합니다." });
+        return;
+      }
+
+      const email = await storage.getEmailById(emailId);
+      if (!email) {
+        res.status(404).json({ error: "이메일을 찾을 수 없습니다." });
+        return;
+      }
+
+      const prompt = `업무 이메일 회신 초안을 작성합니다.
+
+받은 메일:
+제목: "${email.subject || '제목 없음'}"
+주요 내용: ${email.body?.substring(0, 300) || '내용 없음'}
+
+지시사항:
+1. 원본 메일의 주제와 맥락을 파악하여 적절한 회신을 작성하세요
+2. 원본 메일의 문장을 그대로 복사하거나 반복하지 마세요
+3. 원본에 나온 구체적인 숫자, 품목명, 날짜를 그대로 나열하지 마세요
+4. 대신 요청 사항을 이해했다는 표현과 조치 계획을 간결하게 작성하세요
+5. 100% 순수 한국어만 사용하세요 (영어, 일본어, 중국어 등 외국어 절대 금지)
+
+작성 형식:
+[인사말]
+안녕하세요.
+
+[본문 1 - 확인/이해했다는 내용]
+보내주신 메일 내용 확인하였습니다.
+
+[본문 2 - 요청사항에 대한 간단한 언급]
+말씀하신 사항에 대해 (확인 중입니다 / 검토 중입니다 / 관련 부서와 협의 중입니다)
+
+[본문 3 - 후속 조치]
+(빠른 시일 내 / 확인 후 / 검토 완료 후) 다시 회신드리겠습니다.
+
+[마무리 인사]
+감사합니다.
+
+주의사항:
+- 원본 메일 내용을 그대로 인용하지 말 것
+- 5-8문장 정도로 적당히 작성
+- 구체적이지만 단정적이지 않게 작성
+- 책임을 회피하는 안전한 표현 사용`;
+
+      const draftReply = await chatWithOllama([
+        { 
+          role: "system", 
+          content: "당신은 한국 기업 이메일 회신 초안을 작성하는 비서입니다. 원본 메일의 맥락을 이해하되, 원문을 그대로 반복하지 마세요. 적절한 길이(5-8문장)로 정중하고 안전한 회신을 작성하세요. 순수 한국어만 사용하고 외국어를 절대 사용하지 마세요." 
+        },
+        { role: "user", content: prompt },
+      ]);
+
+      res.json({ 
+        draft: draftReply,
+        emailId,
+        originalSubject: email.subject,
+      });
+    } catch (error) {
+      console.error("Draft reply error:", error);
+      res.status(500).json({ error: error instanceof Error ? error.message : "회신 초안 생성 중 오류가 발생했습니다." });
+    }
+  });
+
+  app.get("/api/emails/classification-stats", async (_req: Request, res: Response) => {
+    try {
+      const emails = await storage.getAllEmails(100000);
+      const stats = {
+        total: emails.length,
+        task: 0,
+        meeting: 0,
+        approval: 0,
+        notice: 0,
+        unclassified: 0,
+      };
+
+      for (const email of emails) {
+        if (email.classification === "task") stats.task++;
+        else if (email.classification === "meeting") stats.meeting++;
+        else if (email.classification === "approval") stats.approval++;
+        else if (email.classification === "notice") stats.notice++;
+        else stats.unclassified++;
+      }
+
+      res.json(stats);
+    } catch (error) {
+      console.error("Classification stats error:", error);
+      res.status(500).json({ error: "분류 통계를 가져오는 중 오류가 발생했습니다." });
+    }
+  });
+
+  app.post("/api/emails/reprocess", async (_req: Request, res: Response) => {
+    try {
+      const ollamaConnected = await checkOllamaConnection();
+      if (!ollamaConnected) {
+        res.status(503).json({ 
+          error: "Ollama 서버에 연결할 수 없습니다. Ollama가 실행 중인지 확인해주세요.",
+          ollamaConnected: false 
+        });
+        return;
+      }
+
+      const emails = await storage.getAllEmails(100000);
+      const unprocessedEmails = emails.filter(e => !e.classification || !e.isProcessed);
+      
+      if (unprocessedEmails.length === 0) {
+        res.json({ 
+          ok: true,
+          processed: 0,
+          classified: 0,
+          eventsExtracted: 0,
+          embedded: 0,
+          message: "처리할 이메일이 없습니다. 모든 이메일이 이미 처리되었습니다."
+        });
+        return;
+      }
+
+      let classifiedCount = 0;
+      let eventsExtractedCount = 0;
+      let embeddedCount = 0;
+      let successCount = 0;
+      let failedCount = 0;
+
+      for (const email of unprocessedEmails) {
+        try {
+          if (!email.classification) {
+            const classification = await classifyEmail(email.subject, email.body, email.sender);
+            await storage.updateEmailClassification(email.id, classification.classification, classification.confidence);
+            classifiedCount++;
+          }
+
+          const existingEvents = await storage.getCalendarEventsByEmailId(email.id);
+          if (existingEvents.length === 0) {
+            const events = await extractEventsFromEmail(email.subject, email.body, email.date);
+            for (const event of events) {
+              if (!event.title || !event.startDate) {
+                console.log(`Skipping invalid event for email ${email.id}: missing title or startDate`);
+                continue;
+              }
+              try {
+                await storage.addCalendarEvent({
+                  emailId: email.id,
+                  title: event.title,
+                  startDate: event.startDate,
+                  endDate: event.endDate || null,
+                  location: event.location || null,
+                  description: event.description || null,
+                });
+                eventsExtractedCount++;
+              } catch (eventErr) {
+                console.error(`Failed to add calendar event for email ${email.id}:`, eventErr);
+              }
+            }
+          }
+
+          const existingChunks = await storage.getRagChunksByEmailId(email.id);
+          if (existingChunks.length === 0) {
+            const emailChunks = await generateEmailChunks(
+              email.id, 
+              email.subject, 
+              email.sender, 
+              email.date, 
+              email.body
+            );
+            
+            if (emailChunks.length > 0) {
+              const chunksToSave = emailChunks.map((chunk, idx) => ({
+                emailId: email.id,
+                chunkIndex: idx,
+                content: chunk.content,
+                embedding: JSON.stringify(chunk.embedding),
+              }));
+              await storage.saveRagChunks(chunksToSave);
+              embeddedCount += emailChunks.length;
+            }
+          }
+
+          await storage.markEmailProcessed(email.id);
+          successCount++;
+        } catch (err) {
+          console.error(`Error reprocessing email ${email.id}:`, err);
+          failedCount++;
+        }
+      }
+
+      const message = failedCount > 0
+        ? `${successCount}개 이메일 처리 완료, ${failedCount}개 실패. 분류: ${classifiedCount}개, 일정: ${eventsExtractedCount}개, 임베딩: ${embeddedCount}개 청크`
+        : `${successCount}개 이메일 재처리 완료. 분류: ${classifiedCount}개, 일정: ${eventsExtractedCount}개, 임베딩: ${embeddedCount}개 청크`;
+
+      res.json({ 
+        ok: failedCount === 0,
+        ollamaConnected: true,
+        processed: successCount,
+        failed: failedCount,
+        classified: classifiedCount,
+        eventsExtracted: eventsExtractedCount,
+        embedded: embeddedCount,
+        message
+      });
+    } catch (error) {
+      console.error("Reprocess error:", error);
+      res.status(500).json({ error: error instanceof Error ? error.message : "재처리 중 오류가 발생했습니다." });
+    }
+  });
+
+  app.post("/api/events/extract", async (req: Request, res: Response) => {
+    try {
+      const validationResult = eventExtractionRequestSchema.safeParse(req.body);
+      
+      if (!validationResult.success) {
+        const errors = validationResult.error.errors.map(e => e.message).join(", ");
+        res.status(400).json({ error: errors || "잘못된 요청입니다." });
+        return;
+      }
+
+      const { emailId } = validationResult.data;
+      const email = await storage.getEmailById(emailId);
+      
+      if (!email) {
+        res.status(404).json({ error: "이메일을 찾을 수 없습니다." });
+        return;
+      }
+
+      const extractedEvents = await extractEventsFromEmail(
+        email.subject,
+        email.body,
+        email.date
+      );
+
+      for (const event of extractedEvents) {
+        await storage.addCalendarEvent({
+          emailId: email.id,
+          title: event.title,
+          startDate: event.startDate,
+          endDate: event.endDate || null,
+          location: event.location || null,
+          description: event.description || null,
+        });
+      }
+
+      const response: EventExtractionResponse = {
+        events: extractedEvents,
+        emailId,
+      };
+
+      res.json(response);
+    } catch (error) {
+      console.error("Event extraction error:", error);
+      res.status(500).json({ error: error instanceof Error ? error.message : "일정 추출 중 오류가 발생했습니다." });
+    }
+  });
+
+  app.get("/api/events", async (_req: Request, res: Response) => {
+    try {
+      const events = await storage.getCalendarEvents();
+      res.json(events);
+    } catch (error) {
+      console.error("Get events error:", error);
+      res.status(500).json({ error: "일정을 가져오는 중 오류가 발생했습니다." });
+    }
+  });
+
+  app.get("/api/emails", async (req: Request, res: Response) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 100;
+      const classification = req.query.classification as string | undefined;
+      
+      let allEmails = await storage.getAllEmails(limit);
+      
+      if (classification && classification !== "all") {
+        allEmails = allEmails.filter(e => e.classification === classification);
+      }
+      
+      // 각 이메일의 첨부파일 정보 추가
+      const emailsWithAttachments = await Promise.all(
+        allEmails.map(async (email) => {
+          const attachments = await storage.getEmailAttachments(email.id);
+          return { ...email, attachments };
+        })
+      );
+      
+      res.json(emailsWithAttachments);
+    } catch (error) {
+      console.error("Get emails error:", error);
+      res.status(500).json({ error: "이메일 목록을 가져오는 중 오류가 발생했습니다." });
+    }
+  });
+
+  app.delete("/api/emails/all", async (_req: Request, res: Response) => {
+    try {
+      console.log("🗑️ 모든 데이터 삭제 시작...");
+      const result = await storage.clearAllData();
+      console.log(`✅ 삭제 완료: 이메일 ${result.emails}개, 일정 ${result.events}개, RAG 청크 ${result.chunks}개`);
+      
+      res.json({
+        ok: true,
+        deleted: result,
+        message: `총 ${result.emails}개 이메일, ${result.events}개 일정, ${result.chunks}개 RAG 데이터가 삭제되었습니다.`
+      });
+    } catch (error) {
+      console.error("❌ 데이터 삭제 오류:", error);
+      res.status(500).json({ 
+        ok: false,
+        error: "데이터 삭제 중 오류가 발생했습니다." 
+      });
+    }
+  });
+
+  app.post("/api/emails/:id/classify", async (req: Request, res: Response) => {
+    try {
+      const emailId = parseInt(req.params.id);
+      if (isNaN(emailId)) {
+        res.status(400).json({ error: "잘못된 이메일 ID입니다." });
+        return;
+      }
+
+      const email = await storage.getEmailById(emailId);
+      if (!email) {
+        res.status(404).json({ error: "이메일을 찾을 수 없습니다." });
+        return;
+      }
+
+      const classification = await classifyEmail(email.subject, email.body, email.sender);
+      await storage.updateEmailClassification(emailId, classification.classification, classification.confidence);
+
+      res.json({ 
+        success: true, 
+        classification: classification.classification,
+        confidence: classification.confidence 
+      });
+    } catch (error) {
+      console.error("Classification error:", error);
+      res.status(500).json({ error: error instanceof Error ? error.message : "분류 중 오류가 발생했습니다." });
+    }
+  });
+
+  app.get("/api/settings/storage", async (_req: Request, res: Response) => {
+    try {
+      const savedSettings = await storage.getAppSetting("storage_config");
+      let config = { mode: "postgresql", dataDir: "" };
+      
+      if (savedSettings) {
+        try {
+          config = JSON.parse(savedSettings);
+        } catch {}
+      }
+      
+      const currentMode = process.env.STORAGE_MODE || "postgresql";
+      const currentDataDir = process.env.DATA_DIR || "";
+      
+      res.json({ 
+        mode: currentMode,
+        dataDir: currentDataDir,
+        savedMode: config.mode,
+        savedDataDir: config.dataDir,
+        info: currentMode === "local" && currentDataDir 
+          ? `로컬 저장소 사용 중 (${currentDataDir})` 
+          : "PostgreSQL 데이터베이스 사용 중",
+        needsRestart: config.mode !== currentMode || config.dataDir !== currentDataDir
+      });
+    } catch (error) {
+      console.error("Get storage settings error:", error);
+      res.status(500).json({ error: "설정을 가져오는 중 오류가 발생했습니다." });
+    }
+  });
+
+  app.post("/api/settings/storage", async (req: Request, res: Response) => {
+    try {
+      const { mode, dataDir } = req.body;
+      
+      if (!mode || (mode !== "local" && mode !== "postgresql")) {
+        res.status(400).json({ error: "유효하지 않은 저장소 모드입니다." });
+        return;
+      }
+      
+      if (mode === "local" && !dataDir) {
+        res.status(400).json({ error: "로컬 모드에는 데이터 폴더 경로가 필요합니다." });
+        return;
+      }
+
+      const config = JSON.stringify({ mode, dataDir: dataDir || "" });
+      await storage.setAppSetting("storage_config", config);
+      
+      res.json({ 
+        success: true, 
+        message: "설정이 저장되었습니다. 변경 사항을 적용하려면 애플리케이션을 재시작하세요.",
+        savedMode: mode,
+        savedDataDir: dataDir
+      });
+    } catch (error) {
+      console.error("Save storage settings error:", error);
+      res.status(500).json({ error: "설정 저장 중 오류가 발생했습니다." });
+    }
+  });
+
+  // 사용자 프로필 조회
+  app.get("/api/settings/profile", async (_req: Request, res: Response) => {
+    try {
+      const profile = await storage.getUserProfile();
+      res.json(profile || { email: "", shipNumbers: "" });
+    } catch (error) {
+      console.error("Get user profile error:", error);
+      res.status(500).json({ error: "프로필을 가져오는 중 오류가 발생했습니다." });
+    }
+  });
+
+  // 사용자 프로필 저장/업데이트
+  app.post("/api/settings/profile", async (req: Request, res: Response) => {
+    try {
+      const validation = updateUserProfileSchema.safeParse(req.body);
+      
+      if (!validation.success) {
+        res.status(400).json({ 
+          error: validation.error.errors[0].message 
+        });
+        return;
+      }
+
+      const { email, shipNumbers } = validation.data;
+      await storage.saveUserProfile({ email, shipNumbers });
+      
+      res.json({ 
+        success: true, 
+        message: "프로필이 저장되었습니다.",
+        email,
+        shipNumbers
+      });
+    } catch (error) {
+      console.error("Save user profile error:", error);
+      res.status(500).json({ error: "프로필 저장 중 오류가 발생했습니다." });
+    }
+  });
+
+  app.post("/api/process/unprocessed", async (_req: Request, res: Response) => {
+    try {
+      const ollamaConnected = await checkOllamaConnection();
+      if (!ollamaConnected) {
+        res.status(503).json({ error: "AI 서버에 연결할 수 없습니다." });
+        return;
+      }
+
+      const unprocessed = await storage.getUnprocessedEmails();
+      let processedCount = 0;
+      let eventsCount = 0;
+
+      for (const email of unprocessed) {
+        try {
+          const classification = await classifyEmail(email.subject, email.body, email.sender);
+          await storage.updateEmailClassification(email.id, classification.classification, classification.confidence);
+
+          const events = await extractEventsFromEmail(email.subject, email.body, email.date);
+          for (const event of events) {
+            if (!event.title || !event.startDate) {
+              console.log(`Skipping invalid event for email ${email.id}: missing title or startDate`);
+              continue;
+            }
+            try {
+              await storage.addCalendarEvent({
+                emailId: email.id,
+                title: event.title,
+                startDate: event.startDate,
+                endDate: event.endDate || null,
+                location: event.location || null,
+                description: event.description || null,
+              });
+              eventsCount++;
+            } catch (eventErr) {
+              console.error(`Failed to add calendar event for email ${email.id}:`, eventErr);
+            }
+          }
+
+          await storage.markEmailProcessed(email.id);
+          processedCount++;
+        } catch (err) {
+          console.error(`Error processing email ${email.id}:`, err);
+        }
+      }
+
+      res.json({
+        success: true,
+        processed: processedCount,
+        eventsExtracted: eventsCount,
+        message: `${processedCount}개 이메일 처리 완료, ${eventsCount}개 일정 추출`
+      });
+    } catch (error) {
+      console.error("Process unprocessed error:", error);
+      res.status(500).json({ error: "처리 중 오류가 발생했습니다." });
+    }
+  });
+
+  app.get("/api/attachments/*", (req: Request, res: Response) => {
+    try {
+      const relativePath = req.path.replace('/api/attachments/', '');
+      const attachmentsDir = path.join(process.cwd(), 'data', 'attachments');
+      const filePath = path.join(attachmentsDir, relativePath);
+      
+      if (!filePath.startsWith(attachmentsDir)) {
+        res.status(403).json({ error: "접근이 거부되었습니다." });
+        return;
+      }
+      
+      if (!fs.existsSync(filePath)) {
+        res.status(404).json({ error: "파일을 찾을 수 없습니다." });
+        return;
+      }
+      
+      res.sendFile(filePath);
+    } catch (error) {
+      console.error("Attachment download error:", error);
+      res.status(500).json({ error: "파일 다운로드 중 오류가 발생했습니다." });
+    }
+  });
+
+  return httpServer;
+}
