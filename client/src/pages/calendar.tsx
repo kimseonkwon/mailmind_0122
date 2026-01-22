@@ -161,14 +161,18 @@ export default function CalendarPage() {
     if (filterMyShips && userProfile?.shipNumbers) {
       const myShips = userProfile.shipNumbers
         .split(',')
-        .map(s => s.trim())
+        .map(s => s.trim().toUpperCase())
         .filter(s => s.length > 0);
       
       filtered = filtered.filter(event => {
         if (!event.shipNumber) return false;
-        const eventShips = event.shipNumber.split(',').map(s => s.trim());
+        const eventShips = event.shipNumber.split(',').map(s => s.trim().toUpperCase());
         return eventShips.some(ship => 
-          myShips.some(myShip => ship.toLowerCase().includes(myShip.toLowerCase()))
+          myShips.some(myShip => 
+            ship === myShip || 
+            ship.includes(myShip) || 
+            myShip.includes(ship)
+          )
         );
       });
     }
@@ -183,12 +187,17 @@ export default function CalendarPage() {
     for (const ev of filteredEvents) {
       if (!ev.startDate) continue;
 
-      const dateOnly = new Date(ev.startDate)
-        .toISOString()
-        .slice(0, 10); // YYYY-MM-DD
+      try {
+        const dateOnly = new Date(ev.startDate)
+          .toISOString()
+          .slice(0, 10); // YYYY-MM-DD
 
-      if (!map.has(dateOnly)) map.set(dateOnly, []);
-      map.get(dateOnly)!.push(ev);
+        if (!map.has(dateOnly)) map.set(dateOnly, []);
+        map.get(dateOnly)!.push(ev);
+      } catch (error) {
+        console.error('Invalid date for event:', ev.id, ev.startDate);
+        continue;
+      }
 }
 
     return map;

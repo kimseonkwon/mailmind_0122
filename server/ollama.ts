@@ -64,9 +64,16 @@ export async function extractEventsFromEmail(
     "startDate": "YYYY-MM-DD HH:mm",
     "endDate": "YYYY-MM-DD HH:mm",
     "location": "장소",
-    "description": "설명"
+    "description": "설명",
+    "shipNumber": "호선번호"
   }
 ]
+
+shipNumber는 이메일에서 호선 정보를 찾아서 입력하세요. 
+호선 정보는 다음과 같은 형식으로 나타날 수 있습니다:
+- H3200, H8151, Y-3807, HN-3863, HDHHI-3626 등
+- [호선], (호선), 호선:, Ship: 등의 형식
+- 제목이나 본문에서 호선 번호를 찾아 추출하세요
 
 일정이 없으면 빈 배열 []을 반환하세요.
 날짜가 명시되지 않은 경우 이메일 날짜(${emailDate})를 기준으로 추정하세요.`;
@@ -103,6 +110,26 @@ ${emailBody}`;
     }
 
     const events = JSON.parse(jsonStr);
+    
+    // 호선 정보가 없는 경우 제목이나 본문에서 추출 시도
+    if (Array.isArray(events)) {
+      // 더 포괄적인 호선 패턴: H3200, H8151, HN-3863, Y-3807, HDHHI-3626 등
+      const shipPattern = /\b([HY][A-Z0-9]*[- ]?\d{3,5}|[A-Z]{2,6}[- ]?\d{3,5})\b/gi;
+      const combinedText = `${emailSubject} ${emailBody}`;
+      const shipMatches = combinedText.match(shipPattern);
+      
+      // 중복 제거 및 필터링
+      const uniqueShips = shipMatches ? Array.from(new Set(shipMatches.map(s => s.trim()))) : [];
+      
+      return events.map(event => {
+        if (!event.shipNumber && uniqueShips.length > 0) {
+          // 가장 관련성 높은 호선 선택 (첫 번째 매칭)
+          event.shipNumber = uniqueShips[0];
+        }
+        return event;
+      });
+    }
+    
     return Array.isArray(events) ? events : [];
   } catch (error) {
     // Only log actual parsing failures, not empty responses

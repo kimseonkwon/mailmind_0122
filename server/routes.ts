@@ -366,6 +366,7 @@ export async function registerRoutes(
                   endDate: event.endDate || null,
                   location: event.location || null,
                   description: event.description || null,
+                  shipNumber: event.shipNumber || null,
                 });
                 eventsExtractedCount++;
               } catch (eventErr) {
@@ -1015,6 +1016,7 @@ __EMAIL_META__
                   endDate: event.endDate || null,
                   location: event.location || null,
                   description: event.description || null,
+                  shipNumber: event.shipNumber || null,
                 });
                 eventsExtractedCount++;
               } catch (eventErr) {
@@ -1098,6 +1100,12 @@ __EMAIL_META__
       );
 
       for (const event of extractedEvents) {
+        // startDate가 없으면 이메일 날짜를 사용
+        if (!event.startDate) {
+          console.log(`Event "${event.title}" has no startDate, using email date`);
+          event.startDate = email.date;
+        }
+
         await storage.addCalendarEvent({
           emailId: email.id,
           title: event.title,
@@ -1105,6 +1113,7 @@ __EMAIL_META__
           endDate: event.endDate || null,
           location: event.location || null,
           description: event.description || null,
+          shipNumber: event.shipNumber || null,
         });
       }
 
@@ -1136,15 +1145,22 @@ __EMAIL_META__
       const events = await storage.getCalendarEvents();
       const shipSet = new Set<string>();
       
+      console.log(`Total events: ${events.length}`);
+      
       for (const event of events) {
+        console.log(`Event: ${event.title}, shipNumber: ${event.shipNumber}`);
         if (event.shipNumber) {
           // 쉼표로 구분된 호선이 있을 수 있으므로 분리
           const ships = event.shipNumber.split(',').map(s => s.trim()).filter(s => s.length > 0);
-          ships.forEach(ship => shipSet.add(ship));
+          ships.forEach(ship => {
+            console.log(`Adding ship: ${ship}`);
+            shipSet.add(ship);
+          });
         }
       }
       
       const shipList = Array.from(shipSet).sort();
+      console.log(`Ship list: ${JSON.stringify(shipList)}`);
       res.json(shipList);
     } catch (error) {
       console.error("Get ships error:", error);
@@ -1354,6 +1370,7 @@ __EMAIL_META__
                 endDate: event.endDate || null,
                 location: event.location || null,
                 description: event.description || null,
+                shipNumber: event.shipNumber || null,
               });
               eventsCount++;
             } catch (eventErr) {
