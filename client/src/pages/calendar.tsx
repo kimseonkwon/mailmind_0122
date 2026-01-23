@@ -534,6 +534,18 @@ export default function CalendarPage() {
                         </div>
                       </div>
                     )}
+                    
+                    {!isEmailLoading && email && (
+                      <div className="flex items-start gap-2">
+                        <Mail className="h-4 w-4 text-muted-foreground mt-0.5" />
+                        <div className="flex-1">
+                          <span className="font-medium">메일 본문:</span>
+                          <div className="mt-2 p-3 bg-muted rounded-md max-h-64 overflow-y-auto">
+                            <p className="text-sm whitespace-pre-wrap">{email.body}</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {isEmailLoading && (
