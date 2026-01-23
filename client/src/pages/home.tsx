@@ -372,6 +372,11 @@ export default function Home() {
     setFilterStartDate("");
   };
 
+  const clearEndDate = () => {
+    setEndParts({ year: "", month: "", day: "" });
+    setFilterEndDate("");
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur-lg supports-[backdrop-filter]:bg-background/60 shadow-sm">
@@ -497,7 +502,12 @@ export default function Home() {
                       </PopoverTrigger>
                       <PopoverContent className="w-[280px]" align="start">
                         <div className="space-y-2 text-sm">
-                          <p className="font-medium">종료일을 선택하세요</p>
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="font-medium">종료일을 선택하세요</p>
+                            <Button variant="ghost" size="sm" onClick={clearEndDate} data-testid="reset-end-date">
+                              초기화
+                            </Button>
+                          </div>
                           <div className="grid grid-cols-3 gap-2">
                             <Select
                               value={endParts.year}
@@ -581,23 +591,6 @@ export default function Home() {
             </form>
           </CardContent>
         </Card>
-
-        <div className="grid gap-6 md:grid-cols-2 mb-8">
-          <StatCard
-            title="총 이메일"
-            value={stats?.emailsCount.toLocaleString() ?? "0"}
-            description="저장된 이메일 수"
-            icon={Mail}
-            loading={statsLoading}
-          />
-          <StatCard
-            title="저장소 상태"
-            value={stats?.mode ?? "확인 중..."}
-            description="현재 저장 모드"
-            icon={Database}
-            loading={statsLoading}
-          />
-        </div>
 
         <section>
           <div className="flex items-center justify-between gap-4 mb-6">
