@@ -402,23 +402,6 @@ export default function ImportPage() {
       </header>
 
       <main className="max-w-5xl mx-auto px-4 py-8">
-        <div className="grid gap-6 md:grid-cols-2 mb-8">
-          <StatCard
-            title="총 이메일"
-            value={stats?.emailsCount.toLocaleString() ?? "0"}
-            description="저장된 이메일 수"
-            icon={Mail}
-            loading={statsLoading}
-          />
-          <StatCard
-            title="저장소 상태"
-            value={stats?.mode ?? "확인 중..."}
-            description="현재 저장 모드"
-            icon={Database}
-            loading={statsLoading}
-          />
-        </div>
-
         {classificationStats && classificationStats.unclassified > 0 && (
           <Alert className="mb-8" variant={ollamaStatus?.connected ? "default" : "destructive"}>
             <AlertCircle className="h-4 w-4" />

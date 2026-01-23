@@ -17,7 +17,8 @@ import {
   Save,
   AlertCircle,
   CheckCircle,
-  User
+  User,
+  Mail
 } from "lucide-react";
 
 interface StorageSettings {
@@ -39,6 +40,47 @@ interface UserProfile {
   shipNumbers: string;
 }
 
+interface Stats {
+  mode: string;
+  emailsCount: number;
+  lastImport: string | null;
+}
+
+function StatCard({ 
+  title, 
+  value, 
+  description, 
+  icon: Icon,
+  loading 
+}: { 
+  title: string; 
+  value: string | number; 
+  description?: string;
+  icon: typeof Mail;
+  loading?: boolean;
+}) {
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium">{title}</CardTitle>
+        <Icon className="h-4 w-4 text-muted-foreground" />
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <Skeleton className="h-8 w-24" />
+        ) : (
+          <div className="text-2xl font-bold">
+            {value}
+          </div>
+        )}
+        {description && (
+          <p className="text-xs text-muted-foreground mt-1">{description}</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Settings() {
   const { toast } = useToast();
   const [storageMode, setStorageMode] = useState<string>("");
@@ -58,6 +100,10 @@ export default function Settings() {
 
   const { data: ollamaStatus, isLoading: ollamaLoading } = useQuery<OllamaStatus>({
     queryKey: ["/api/ollama/status"],
+  });
+
+  const { data: stats, isLoading: statsLoading } = useQuery<Stats>({
+    queryKey: ["/api/stats"],
   });
 
   useEffect(() => {
@@ -168,6 +214,23 @@ export default function Settings() {
       </header>
 
       <main className="max-w-4xl mx-auto px-4 py-8 space-y-6">
+        <div className="grid gap-6 md:grid-cols-2">
+          <StatCard
+            title="총 이메일"
+            value={stats?.emailsCount.toLocaleString() ?? "0"}
+            description="저장된 이메일 수"
+            icon={Mail}
+            loading={statsLoading}
+          />
+          <StatCard
+            title="저장소 상태"
+            value={stats?.mode ?? "확인 중..."}
+            description="현재 저장 모드"
+            icon={Database}
+            loading={statsLoading}
+          />
+        </div>
+
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
