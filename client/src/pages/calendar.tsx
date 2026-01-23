@@ -254,16 +254,6 @@ export default function CalendarPage() {
             </div>
 
             <div className="flex items-center gap-3">
-              <div className="flex items-center gap-2">
-                <Switch 
-                  id="filter-my-ships-calendar" 
-                  checked={filterMyShips}
-                  onCheckedChange={setFilterMyShips}
-                />
-                <Label htmlFor="filter-my-ships-calendar" className="cursor-pointer text-sm font-medium">
-                  담당 호선
-                </Label>
-              </div>
               <div className="h-6 w-px bg-border" />
               <Button
                 variant={viewMode === 'list' ? 'default' : 'outline'}
@@ -343,9 +333,32 @@ export default function CalendarPage() {
               </div>
               {ships && ships.length > 0 ? (
                 <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant={filterMyShips ? 'default' : 'outline'}
+                    onClick={() => {
+                      const newFilterState = !filterMyShips;
+                      setFilterMyShips(newFilterState);
+                      // 담당 호선 필터를 끄면 선택된 호선 초기화
+                      if (!newFilterState) {
+                        setSelectedShips(new Set());
+                      }
+                    }}
+                    className="gap-2"
+                  >
+                    담당 호선
+                  </Button>
                   {ships.map((ship) => {
                     const isSelected = selectedShips.has(ship);
-                    const isActive = selectedShips.size === 0 || isSelected;
+                    
+                    // 담당 호선 필터가 활성화되어 있을 때
+                    let isActive: boolean;
+                    if (filterMyShips && userProfile?.shipNumbers) {
+                      const myShips = userProfile.shipNumbers.split(',').map(s => s.trim()).filter(Boolean);
+                      isActive = myShips.some(myShip => ship.toLowerCase().includes(myShip.toLowerCase()));
+                    } else {
+                      // 일반 필터 모드
+                      isActive = selectedShips.size === 0 || isSelected;
+                    }
                     
                     return (
                       <button
