@@ -7,6 +7,7 @@ import pdf from "pdf-parse";
 export interface ParsedEmailFromEML {
   subject: string;
   sender: string;
+  recipient?: string;
   date: string;
   body: string;
   importance?: string;
@@ -142,6 +143,7 @@ export async function parseMultipleEMLFiles(dirPath: string): Promise<EMLParseRe
 async function convertParsedMailToEmail(parsed: ParsedMail, sourceFileName: string): Promise<ParsedEmailFromEML> {
   const subject = parsed.subject || "(제목 없음)";
   const sender = parsed.from?.text || parsed.from?.value?.[0]?.address || "unknown@unknown.com";
+  const recipient = parsed.to?.text || parsed.to?.value?.[0]?.address || "";
   const date = formatEmailDate(parsed.date);
   const body = parsed.text || parsed.html || "";
   
@@ -193,6 +195,7 @@ async function convertParsedMailToEmail(parsed: ParsedMail, sourceFileName: stri
   return {
     subject,
     sender,
+    recipient,
     date,
     body,
     attachments: attachments.length > 0 ? attachments : undefined,

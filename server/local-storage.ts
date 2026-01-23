@@ -67,6 +67,7 @@ export class LocalSQLiteStorage implements IStorage {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         subject TEXT NOT NULL DEFAULT '',
         sender TEXT NOT NULL DEFAULT '',
+        recipient TEXT DEFAULT '',
         date TEXT NOT NULL DEFAULT '',
         body TEXT NOT NULL DEFAULT '',
         importance TEXT,
@@ -248,11 +249,12 @@ export class LocalSQLiteStorage implements IStorage {
 
   async insertEmail(email: InsertEmail): Promise<Email> {
     const result = this.db.prepare(`
-      INSERT INTO emails (subject, sender, date, body, importance, label, classification, classification_confidence, is_processed)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO emails (subject, sender, recipient, date, body, importance, label, classification, classification_confidence, is_processed)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       email.subject || '',
       email.sender || '',
+      (email as any).recipient || '',
       email.date || '',
       email.body || '',
       email.importance || null,
@@ -266,6 +268,7 @@ export class LocalSQLiteStorage implements IStorage {
       id: result.lastInsertRowid as number,
       subject: email.subject || '',
       sender: email.sender || '',
+      recipient: (email as any).recipient || '',
       date: email.date || '',
       body: email.body || '',
       importance: email.importance || null,
@@ -282,8 +285,8 @@ export class LocalSQLiteStorage implements IStorage {
     if (emailsToInsert.length === 0) return 0;
     
     const insert = this.db.prepare(`
-      INSERT INTO emails (subject, sender, date, body, importance, label, classification, classification_confidence, is_processed)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO emails (subject, sender, recipient, date, body, importance, label, classification, classification_confidence, is_processed)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const insertMany = this.db.transaction((emails: InsertEmail[]) => {
@@ -291,6 +294,7 @@ export class LocalSQLiteStorage implements IStorage {
         insert.run(
           email.subject || '',
           email.sender || '',
+          (email as any).recipient || '',
           email.date || '',
           email.body || '',
           email.importance || null,
@@ -312,14 +316,15 @@ export class LocalSQLiteStorage implements IStorage {
     const results: Email[] = [];
     
     const insert = this.db.prepare(`
-      INSERT INTO emails (subject, sender, date, body, importance, label, classification, classification_confidence, is_processed)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO emails (subject, sender, recipient, date, body, importance, label, classification, classification_confidence, is_processed)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     for (const email of emailsToInsert) {
       const result = insert.run(
         email.subject || '',
         email.sender || '',
+        (email as any).recipient || '',
         email.date || '',
         email.body || '',
         email.importance || null,
@@ -333,6 +338,7 @@ export class LocalSQLiteStorage implements IStorage {
         id: result.lastInsertRowid as number,
         subject: email.subject || '',
         sender: email.sender || '',
+        recipient: (email as any).recipient || '',
         date: email.date || '',
         body: email.body || '',
         importance: email.importance || null,
@@ -348,12 +354,13 @@ export class LocalSQLiteStorage implements IStorage {
   }
 
   async getEmailById(id: number): Promise<Email | undefined> {
-    const row = this.db.prepare('SELECT * FROM emails WHERE id = ?').get(id) as { id: number; subject: string; sender: string; date: string; body: string; importance: string | null; label: string | null; classification: string | null; classification_confidence: string | null; is_processed: string | null; created_at: string } | undefined;
+    const row = this.db.prepare('SELECT * FROM emails WHERE id = ?').get(id) as { id: number; subject: string; sender: string; recipient: string | null; date: string; body: string; importance: string | null; label: string | null; classification: string | null; classification_confidence: string | null; is_processed: string | null; created_at: string } | undefined;
     if (!row) return undefined;
     return {
       id: row.id,
       subject: row.subject,
       sender: row.sender,
+      recipient: row.recipient || undefined,
       date: row.date,
       body: row.body,
       importance: row.importance,
@@ -366,11 +373,12 @@ export class LocalSQLiteStorage implements IStorage {
   }
 
   async getAllEmails(limit: number = 1000): Promise<Email[]> {
-    const rows = this.db.prepare('SELECT * FROM emails ORDER BY created_at DESC LIMIT ?').all(limit) as Array<{ id: number; subject: string; sender: string; date: string; body: string; importance: string | null; label: string | null; classification: string | null; classification_confidence: string | null; is_processed: string | null; created_at: string }>;
+    const rows = this.db.prepare('SELECT * FROM emails ORDER BY created_at DESC LIMIT ?').all(limit) as Array<{ id: number; subject: string; sender: string; recipient: string | null; date: string; body: string; importance: string | null; label: string | null; classification: string | null; classification_confidence: string | null; is_processed: string | null; created_at: string }>;
     return rows.map(row => ({
       id: row.id,
       subject: row.subject,
       sender: row.sender,
+      recipient: row.recipient || undefined,
       date: row.date,
       body: row.body,
       importance: row.importance,
@@ -383,11 +391,12 @@ export class LocalSQLiteStorage implements IStorage {
   }
 
   async getUnprocessedEmails(): Promise<Email[]> {
-    const rows = this.db.prepare("SELECT * FROM emails WHERE is_processed = 'false' ORDER BY created_at").all() as Array<{ id: number; subject: string; sender: string; date: string; body: string; importance: string | null; label: string | null; classification: string | null; classification_confidence: string | null; is_processed: string | null; created_at: string }>;
+    const rows = this.db.prepare("SELECT * FROM emails WHERE is_processed = 'false' ORDER BY created_at").all() as Array<{ id: number; subject: string; sender: string; recipient: string | null; date: string; body: string; importance: string | null; label: string | null; classification: string | null; classification_confidence: string | null; is_processed: string | null; created_at: string }>;
     return rows.map(row => ({
       id: row.id,
       subject: row.subject,
       sender: row.sender,
+      recipient: row.recipient || undefined,
       date: row.date,
       body: row.body,
       importance: row.importance,

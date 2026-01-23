@@ -106,10 +106,10 @@ export default function EmailsPage() {
   let filteredEmails = emails || [];
   
   if (userProfile) {
-    // "나에게 온 메일" 필터
+    // "나에게 온 메일" 필터 - recipient 필드 확인
     if (filterMyEmails && userProfile.email) {
       filteredEmails = filteredEmails.filter(email => 
-        email.sender.toLowerCase().includes(userProfile.email.toLowerCase())
+        email.recipient?.toLowerCase().includes(userProfile.email.toLowerCase())
       );
     }
     
@@ -307,10 +307,14 @@ export default function EmailsPage() {
                       <div className="flex items-start justify-between gap-4">
                         <div className="flex-1 min-w-0">
                           <p className="text-base font-semibold truncate">{email.subject || "제목 없음"}</p>
-                          <div className="flex items-center gap-3 mt-2">
+                          <div className="flex items-center gap-3 mt-2 flex-wrap">
                             <p className="text-sm text-muted-foreground flex items-center gap-1.5">
-                              <User className="h-3.5 w-3.5" />
+                              <span className="font-medium">보낸 사람</span>
                               {email.sender || "-"}
+                            </p>
+                            <p className="text-sm text-muted-foreground flex items-center gap-1.5">
+                              <span className="font-medium">받는 사람</span>
+                              {(email as any).recipient || "-"}
                             </p>
                             <p className="text-sm text-muted-foreground flex items-center gap-1.5">
                               <Clock className="h-3.5 w-3.5" />

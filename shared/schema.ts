@@ -7,6 +7,7 @@ export const emails = pgTable("emails", {
   id: serial("id").primaryKey(),
   subject: text("subject").notNull().default(""),
   sender: text("sender").notNull().default(""),
+  recipient: text("recipient").default(""),
   date: text("date").notNull().default(""),
   body: text("body").notNull().default(""),
   importance: text("importance"),

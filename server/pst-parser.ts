@@ -10,6 +10,7 @@ import pdfParse from "pdf-parse";
 export interface ParsedEmail {
   subject: string;
   sender: string;
+  recipient?: string;
   date: string;
   body: string;
   importance?: string;
@@ -318,6 +319,39 @@ function extractSender(email: PSTMessage): string {
   return "";
 }
 
+function extractRecipient(email: PSTMessage): string {
+  const e = email as any;
+
+  // 직접적인 recipient 필드 시도
+  const direct =
+    decodeText(e.displayTo) ||
+    decodeText(e.receivedByEmailAddress) ||
+    decodeText(e.receivedByName) ||
+    decodeText(e.receivedBySmtpAddress) ||
+    "";
+
+  if (direct.trim()) return direct.trim();
+
+  // 헤더에서 To 필드 추출
+  const headerCandidates = [
+    e.transportMessageHeaders,
+    e.internetMessageHeaders,
+    e.messageHeaders,
+    e.headers,
+    e.header,
+  ];
+
+  for (const hc of headerCandidates) {
+    const headers = decodeText(hc) || "";
+    if (!headers) continue;
+
+    const toLine = headers.match(/^To:\s*(.+)$/im)?.[1]?.trim() || "";
+    if (toLine) return toLine;
+  }
+
+  return "";
+}
+
 async function extractPdfText(filePath: string): Promise<string> {
   try {
     const dataBuffer = fs.readFileSync(filePath);
@@ -432,6 +466,7 @@ async function processFolder(folder: PSTFolder, emails: ParsedEmail[], errors: s
           const parsed: ParsedEmail = {
             subject: decodeText(email.subject) || "(제목 없음)",
             sender: extractSender(email),
+            recipient: extractRecipient(email),
             date: formatDate(email.messageDeliveryTime || email.clientSubmitTime),
             body: extractBody(email),
             importance: getImportance(email.importance),
@@ -611,6 +646,7 @@ function parseEmlContent(content: string, label?: string): ParsedEmail | null {
   return {
     subject: subject || "(제목 없음)",
     sender: sender || "(발신자 없음)",
+    recipient: "",
     date,
     body,
     importance: "normal",
