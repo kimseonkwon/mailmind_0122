@@ -284,7 +284,11 @@ export type ClassificationStats = z.infer<typeof classificationStatsSchema>;
 // 사용자 프로필 테이블
 export const userProfiles = pgTable("user_profiles", {
   id: serial("id").primaryKey(),
+  name: text("name").default(""),
   email: text("email").notNull(),
+  department: text("department").default(""),
+  area: text("area").default(""),
+  equipment: text("equipment").default(""),
   shipNumbers: text("ship_numbers").notNull(), // 쉼표로 구분된 호선 번호들
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -297,7 +301,11 @@ export const insertUserProfileSchema = createInsertSchema(userProfiles).omit({
 });
 
 export const updateUserProfileSchema = z.object({
+  name: z.string().optional(),
   email: z.string().email("올바른 이메일 주소를 입력하세요"),
+  department: z.string().optional(),
+  area: z.string().optional(),
+  equipment: z.string().optional(),
   shipNumbers: z.string().min(1, "담당 호선을 입력하세요"),
 });
 

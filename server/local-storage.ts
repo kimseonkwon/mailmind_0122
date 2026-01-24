@@ -147,7 +147,11 @@ export class LocalSQLiteStorage implements IStorage {
 
       CREATE TABLE IF NOT EXISTS user_profiles (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT DEFAULT '',
         email TEXT NOT NULL,
+        department TEXT DEFAULT '',
+        area TEXT DEFAULT '',
+        equipment TEXT DEFAULT '',
         ship_numbers TEXT NOT NULL,
         created_at TEXT DEFAULT (datetime('now')),
         updated_at TEXT DEFAULT (datetime('now'))
@@ -628,29 +632,33 @@ export class LocalSQLiteStorage implements IStorage {
   }
 
   async getUserProfile(): Promise<any> {
-    const row = this.db.prepare('SELECT * FROM user_profiles LIMIT 1').get() as { id: number; email: string; ship_numbers: string; created_at: string; updated_at: string } | undefined;
+    const row = this.db.prepare('SELECT * FROM user_profiles LIMIT 1').get() as { id: number; name: string; email: string; department: string; area: string; equipment: string; ship_numbers: string; created_at: string; updated_at: string } | undefined;
     if (!row) return undefined;
     
     return {
       id: row.id,
+      name: row.name || '',
       email: row.email,
+      department: row.department || '',
+      area: row.area || '',
+      equipment: row.equipment || '',
       shipNumbers: row.ship_numbers,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
   }
 
-  async saveUserProfile(profile: { email: string; shipNumbers: string }): Promise<void> {
+  async saveUserProfile(profile: { name?: string; email: string; department?: string; area?: string; equipment?: string; shipNumbers: string }): Promise<void> {
     const existing = await this.getUserProfile();
     
     if (existing) {
       this.db.prepare(`
         UPDATE user_profiles 
-        SET email = ?, ship_numbers = ?, updated_at = datetime('now') 
+        SET name = ?, email = ?, department = ?, area = ?, equipment = ?, ship_numbers = ?, updated_at = datetime('now') 
         WHERE id = ?
-      `).run(profile.email, profile.shipNumbers, existing.id);
+      `).run(profile.name || '', profile.email, profile.department || '', profile.area || '', profile.equipment || '', profile.shipNumbers, existing.id);
     } else {
-      this.db.prepare('INSERT INTO user_profiles (email, ship_numbers) VALUES (?, ?)').run(profile.email, profile.shipNumbers);
+      this.db.prepare('INSERT INTO user_profiles (name, email, department, area, equipment, ship_numbers) VALUES (?, ?, ?, ?, ?, ?)').run(profile.name || '', profile.email, profile.department || '', profile.area || '', profile.equipment || '', profile.shipNumbers);
     }
   }
 

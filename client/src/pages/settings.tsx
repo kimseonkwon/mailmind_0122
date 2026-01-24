@@ -36,7 +36,11 @@ interface OllamaStatus {
 }
 
 interface UserProfile {
+  name?: string;
   email: string;
+  department?: string;
+  area?: string;
+  equipment?: string;
   shipNumbers: string;
 }
 
@@ -86,7 +90,11 @@ export default function Settings() {
   const [storageMode, setStorageMode] = useState<string>("");
   const [dataDir, setDataDir] = useState<string>("");
   const [isFormInitialized, setIsFormInitialized] = useState(false);
+  const [userName, setUserName] = useState<string>("");
   const [userEmail, setUserEmail] = useState<string>("");
+  const [department, setDepartment] = useState<string>("");
+  const [area, setArea] = useState<string>("");
+  const [equipment, setEquipment] = useState<string>("");
   const [shipNumbers, setShipNumbers] = useState<string>("");
   const [isProfileInitialized, setIsProfileInitialized] = useState(false);
 
@@ -116,7 +124,11 @@ export default function Settings() {
 
   useEffect(() => {
     if (userProfile && !isProfileInitialized) {
+      setUserName(userProfile.name || "");
       setUserEmail(userProfile.email || "");
+      setDepartment(userProfile.department || "");
+      setArea(userProfile.area || "");
+      setEquipment(userProfile.equipment || "");
       setShipNumbers(userProfile.shipNumbers || "");
       setIsProfileInitialized(true);
     }
@@ -143,7 +155,7 @@ export default function Settings() {
   });
 
   const saveProfileMutation = useMutation({
-    mutationFn: async (data: { email: string; shipNumbers: string }) => {
+    mutationFn: async (data: { name?: string; email: string; department?: string; area?: string; equipment?: string; shipNumbers: string }) => {
       return apiRequest("POST", "/api/settings/profile", data);
     },
     onSuccess: () => {
@@ -194,7 +206,14 @@ export default function Settings() {
       return;
     }
 
-    saveProfileMutation.mutate({ email: userEmail, shipNumbers: shipNumbers });
+    saveProfileMutation.mutate({ 
+      name: userName.trim() || undefined,
+      email: userEmail, 
+      department: department.trim() || undefined,
+      area: area.trim() || undefined,
+      equipment: equipment.trim() || undefined,
+      shipNumbers: shipNumbers 
+    });
   };
 
   return (
@@ -250,8 +269,22 @@ export default function Settings() {
             ) : (
               <div className="space-y-4">
                 <div className="space-y-2">
+                  <Label htmlFor="userName" className="text-sm font-medium">
+                    이름
+                  </Label>
+                  <Input
+                    id="userName"
+                    type="text"
+                    value={userName}
+                    onChange={(e) => setUserName(e.target.value)}
+                    placeholder="홍길동"
+                    data-testid="input-user-name"
+                  />
+                </div>
+
+                <div className="space-y-2">
                   <Label htmlFor="userEmail" className="text-sm font-medium">
-                    본인 메일주소
+                    메일주소 *
                   </Label>
                   <Input
                     id="userEmail"
@@ -264,8 +297,50 @@ export default function Settings() {
                 </div>
 
                 <div className="space-y-2">
+                  <Label htmlFor="department" className="text-sm font-medium">
+                    부서
+                  </Label>
+                  <Input
+                    id="department"
+                    type="text"
+                    value={department}
+                    onChange={(e) => setDepartment(e.target.value)}
+                    placeholder="생산관리팀"
+                    data-testid="input-department"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="area" className="text-sm font-medium">
+                    담당 구역
+                  </Label>
+                  <Input
+                    id="area"
+                    type="text"
+                    value={area}
+                    onChange={(e) => setArea(e.target.value)}
+                    placeholder="1공장"
+                    data-testid="input-area"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="equipment" className="text-sm font-medium">
+                    장비
+                  </Label>
+                  <Input
+                    id="equipment"
+                    type="text"
+                    value={equipment}
+                    onChange={(e) => setEquipment(e.target.value)}
+                    placeholder="크레인, 용접기"
+                    data-testid="input-equipment"
+                  />
+                </div>
+
+                <div className="space-y-2">
                   <Label htmlFor="shipNumbers" className="text-sm font-medium">
-                    담당 호선(복수)
+                    담당 호선(복수) *
                   </Label>
                   <Input
                     id="shipNumbers"
