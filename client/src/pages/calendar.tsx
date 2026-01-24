@@ -393,9 +393,12 @@ export default function CalendarPage() {
                     const dayEvents = eventsByDate.get(key);
                     if (!dayEvents?.length) return null;
 
+                    const displayCount = 2; // 최대 2개만 표시
+                    const hasMore = dayEvents.length > displayCount;
+
                     return (
                       <div className="mt-1 space-y-0.5 w-full px-0.5">
-                        {dayEvents.map((ev, idx) => {
+                        {dayEvents.slice(0, displayCount).map((ev) => {
                           const category = getEventCategory(ev.title);
                           const truncatedTitle = ev.title.length > 12 ? ev.title.substring(0, 12) + '...' : ev.title;
                           return (
@@ -409,6 +412,18 @@ export default function CalendarPage() {
                             </div>
                           );
                         })}
+                        {hasMore && (
+                          <div
+                            className="text-[10px] px-1 py-0.5 text-primary font-semibold cursor-pointer hover:underline"
+                            style={{ lineHeight: '1.2' }}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setSelectedDate(date);
+                            }}
+                          >
+                            +{dayEvents.length - displayCount}개 더보기
+                          </div>
+                        )}
                       </div>
                     );
                   }}
