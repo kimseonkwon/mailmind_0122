@@ -5,19 +5,21 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import Home from "@/pages/home";
+import SearchPage from "@/pages/search";
 import ImportPage from "@/pages/import";
 import ChatPage from "@/pages/chat";
 import EmailsPage from "@/pages/emails";
 import CalendarPage from "@/pages/calendar";
 import SettingsPage from "@/pages/settings";
 import NotFound from "@/pages/not-found";
-import { Search, FolderUp, MessageCircle, Mail, Calendar, Settings } from "lucide-react";
+import { Home as HomeIcon, Search, FolderUp, MessageCircle, Mail, Calendar, Settings } from "lucide-react";
 
 function Navigation() {
   const [location] = useLocation();
   
   const navItems = [
-    { href: "/", icon: Search, label: "검색", testId: "nav-search" },
+    { href: "/", icon: HomeIcon, label: "홈", testId: "nav-home" },
+    { href: "/search", icon: Search, label: "검색", testId: "nav-search" },
     { href: "/emails", icon: Mail, label: "이메일", testId: "nav-emails" },
     { href: "/chat", icon: MessageCircle, label: "채팅", testId: "nav-chat" },
     { href: "/calendar", icon: Calendar, label: "일정", testId: "nav-calendar" },
@@ -58,6 +60,7 @@ function Router() {
   return (
     <Switch>
       <Route path="/" component={Home} />
+      <Route path="/search" component={SearchPage} />
       <Route path="/import" component={ImportPage} />
       <Route path="/chat" component={ChatPage} />
       <Route path="/emails" component={EmailsPage} />

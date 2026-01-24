@@ -1,30 +1,32 @@
-import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useState, useMemo } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
 import { 
-  Search, 
   Mail, 
-  Database, 
+  Calendar as CalendarIcon,
   Clock, 
-  User, 
-  FileText,
-  AlertCircle,
-  Loader2,
-  ChevronDown,
-  ChevronUp,
-  X,
-  Sparkles
+  Ship,
+  ChevronLeft,
+  ChevronRight
 } from "lucide-react";
-import type { Stats, ChatResponse, SearchResult, EventExtractionResponse } from "@shared/schema";
-import { cn } from "@/lib/utils";
+import type { Email, CalendarEvent, UserProfile } from "@shared/schema";
+import { Button } from "@/components/ui/button";
+
+interface EmailStats {
+  total: number;
+  needsReply: number;
+  thisWeekMeetings: number;
+  shipEvents: number;
+}
+
+interface EmailStats {
+  total: number;
+  needsReply: number;
+  thisWeekMeetings: number;
+  shipEvents: number;
+}
 
 function StatCard({ 
   title, 
@@ -40,624 +42,317 @@ function StatCard({
   loading?: boolean;
 }) {
   return (
-    <Card className="hover:shadow-lg transition-all duration-200 hover:-translate-y-1 border-l-4 border-l-primary">
-      <CardHeader className="flex flex-row items-center justify-between gap-4 space-y-0 pb-3">
-        <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wider">{title}</CardTitle>
-        <div className="rounded-full bg-primary/10 p-2">
-          <Icon className="h-5 w-5 text-primary" />
-        </div>
+    <Card className="hover:shadow-lg transition-all duration-200">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <CardTitle className="text-sm font-medium">{title}</CardTitle>
+        <Icon className="h-4 w-4 text-muted-foreground" />
       </CardHeader>
       <CardContent>
         {loading ? (
-          <Skeleton className="h-10 w-28" />
+          <Skeleton className="h-8 w-20" />
         ) : (
-          <div className="text-3xl font-bold tracking-tight" data-testid={`stat-${title.toLowerCase().replace(/\s/g, '-')}`}>
-            {value}
-          </div>
+          <div className="text-2xl font-bold">{value}</div>
         )}
         {description && (
-          <p className="text-xs text-muted-foreground mt-2 leading-relaxed">{description}</p>
+          <p className="text-xs text-muted-foreground mt-1">{description}</p>
         )}
-      </CardContent>
-    </Card>
-  );
-}
-
-function EmailResultCard({ 
-  result, 
-  index,
-  expanded,
-  onToggle,
-  onExtract,
-  isExtracting
-}: { 
-  result: SearchResult; 
-  index: number;
-  expanded: boolean;
-  onToggle: () => void;
-  onExtract: (emailId: number) => void;
-  isExtracting: boolean;
-}) {
-  return (
-    <Card 
-      className="hover:shadow-md transition-all duration-200 hover:border-primary/50 cursor-pointer group"
-      onClick={onToggle}
-      data-testid={`email-result-${index}`}
-    >
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-3 flex-wrap mb-3">
-              <h3 className="font-semibold text-lg truncate group-hover:text-primary transition-colors" data-testid={`email-subject-${index}`}>
-                {result.subject || "(제목 없음)"}
-              </h3>
-              <Badge variant="secondary" className="text-xs shrink-0 font-medium">
-                점수: {result.score.toFixed(1)}
-              </Badge>
-            </div>
-            <div className="flex items-center gap-4 mt-2 text-sm text-muted-foreground flex-wrap">
-              {result.sender && (
-                <span className="flex items-center gap-1.5">
-                  <User className="h-3.5 w-3.5" />
-                  <span className="truncate max-w-[200px]">{result.sender}</span>
-                </span>
-              )}
-              {result.date && (
-                <span className="flex items-center gap-1.5">
-                  <Clock className="h-3.5 w-3.5" />
-                  <span>{result.date}</span>
-                </span>
-              )}
-            </div>
-            {!expanded && result.body && (
-              <p className="mt-3 text-sm text-muted-foreground line-clamp-2 leading-relaxed">
-                {result.body}
-              </p>
-            )}
-            {expanded && result.body && (
-              <div className="mt-4 p-4 bg-muted/50 rounded-lg border">
-                <p className="text-sm whitespace-pre-wrap leading-relaxed">{result.body}</p>
-              </div>
-            )}
-            {expanded && result.attachments && result.attachments.length > 0 && (
-              <div className="mt-4 border-t pt-4">
-                <p className="text-sm font-semibold mb-3 flex items-center gap-2">
-                  <FileText className="h-4 w-4" />
-                  첨부파일 ({result.attachments.length})
-                </p>
-                <div className="space-y-2">
-                  {result.attachments.map((att, idx) => (
-                    <div key={idx} className="flex items-center justify-between p-3 border rounded-lg bg-background hover:bg-muted/50 transition-colors">
-                      <div className="flex items-center gap-3 flex-1 min-w-0">
-                        <FileText className="h-4 w-4 text-primary shrink-0" />
-                        <span className="text-sm truncate font-medium">{att.originalName}</span>
-                        <span className="text-xs text-muted-foreground whitespace-nowrap">
-                          ({(att.size / 1024).toFixed(1)} KB)
-                        </span>
-                      </div>
-                      {att.originalName.toLowerCase().endsWith('.pdf') && (
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            window.open(`/api/attachments/${att.relPath}`, '_blank');
-                          }}
-                        >
-                          보기
-                        </Button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-            {expanded && (
-              <div className="mt-4 flex gap-2">
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onExtract(parseInt(result.mailId));
-                  }}
-                  disabled={isExtracting}
-                  data-testid={`extract-events-${index}`}
-                  className="gap-2"
-                >
-                  {isExtracting ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Sparkles className="h-4 w-4" />
-                  )}
-                  일정 추출
-                </Button>
-              </div>
-            )}
-          </div>
-          <Button 
-            variant="ghost" 
-            size="icon" 
-            className="shrink-0 group-hover:bg-muted"
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggle();
-            }}
-            data-testid={`toggle-email-${index}`}
-          >
-            {expanded ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
-          </Button>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function EmptyState({ 
-  icon: Icon, 
-  title, 
-  description 
-}: { 
-  icon: typeof Mail; 
-  title: string; 
-  description: string;
-}) {
-  return (
-    <Card className="border-dashed">
-      <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-        <div className="rounded-full bg-primary/10 p-6 mb-6">
-          <Icon className="h-10 w-10 text-primary" />
-        </div>
-        <h3 className="text-lg font-semibold mb-2">{title}</h3>
-        <p className="text-sm text-muted-foreground max-w-sm leading-relaxed">{description}</p>
       </CardContent>
     </Card>
   );
 }
 
 export default function Home() {
-  const { toast } = useToast();
-  const [searchQuery, setSearchQuery] = useState("");
-  const [topK, setTopK] = useState(10);
-  const [expandedEmails, setExpandedEmails] = useState<Set<number>>(new Set());
-  const [searchResults, setSearchResults] = useState<ChatResponse | null>(null);
-  const [extractingEmails, setExtractingEmails] = useState<Set<number>>(new Set());
-  const [filterSender, setFilterSender] = useState("");
-  const [filterSubject, setFilterSubject] = useState("");
-  const [filterBody, setFilterBody] = useState("");
-  const [filterStartDate, setFilterStartDate] = useState("");
-  const [filterEndDate, setFilterEndDate] = useState("");
-  const [filterOperator, setFilterOperator] = useState<"and" | "or">("and");
-  const [startParts, setStartParts] = useState({ year: "", month: "", day: "" });
-  const [endParts, setEndParts] = useState({ year: "", month: "", day: "" });
+  const [currentDate, setCurrentDate] = useState(new Date());
 
-  const { data: stats, isLoading: statsLoading } = useQuery<Stats>({
-    queryKey: ["/api/stats"],
+  const { data: emails, isLoading: emailsLoading } = useQuery<Email[]>({
+    queryKey: ["/api/emails"],
   });
 
-  const extractMutation = useMutation({
-    mutationFn: async (emailId: number) => {
-      setExtractingEmails(prev => new Set(prev).add(emailId));
-      const res = await apiRequest("POST", "/api/events/extract", { emailId });
-      return res.json() as Promise<EventExtractionResponse>;
-    },
-    onSuccess: (data) => {
-      setExtractingEmails(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(data.emailId);
-        return newSet;
-      });
-      if (data.events.length > 0) {
-        toast({
-          title: "일정 추출 완료",
-          description: `${data.events.length}개의 일정을 추출했습니다.`,
-        });
-      } else {
-        toast({
-          title: "일정 없음",
-          description: "이 이메일에서 일정을 찾을 수 없습니다.",
-        });
-      }
-      queryClient.invalidateQueries({ queryKey: ["/api/events"] });
-    },
-    onError: (error: Error, emailId: number) => {
-      setExtractingEmails(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(emailId);
-        return newSet;
-      });
-      toast({
-        title: "일정 추출 실패",
-        description: error.message || "일정을 추출하는 중 오류가 발생했습니다.",
-        variant: "destructive",
-      });
-    },
+  const { data: events, isLoading: eventsLoading } = useQuery<CalendarEvent[]>({
+    queryKey: ["/api/events"],
   });
 
-  const searchMutation = useMutation({
-    mutationFn: async (data: { message: string; topK: number; filters?: any }) => {
-      const res = await apiRequest("POST", "/api/search", data);
-      return res.json() as Promise<ChatResponse>;
-    },
-    onSuccess: (data) => {
-      setSearchResults(data);
-      setExpandedEmails(new Set());
-    },
-    onError: (error) => {
-      toast({
-        title: "검색 실패",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
+  const { data: userProfile } = useQuery<UserProfile>({
+    queryKey: ["/api/settings/profile"],
   });
 
-  const hasActiveFilters = () => [filterSender, filterSubject, filterBody, filterStartDate, filterEndDate].some(v => v.trim().length > 0);
-
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    const hasFilters = hasActiveFilters();
-    if (!searchQuery.trim() && !hasFilters) {
-      toast({
-        title: "검색어를 입력해주세요",
-        variant: "destructive",
-      });
-      return;
+  // 통계 계산
+  const stats = useMemo<EmailStats>(() => {
+    if (!emails || !events || !userProfile) {
+      return { total: 0, needsReply: 0, thisWeekMeetings: 0, shipEvents: 0 };
     }
-    searchMutation.mutate({ 
-      message: searchQuery, 
-      topK,
-      filters: {
-        sender: filterSender || undefined,
-        subject: filterSubject || undefined,
-        body: filterBody || undefined,
-        startDate: filterStartDate || undefined,
-        endDate: filterEndDate || undefined,
-        operator: filterOperator,
-      }
+
+    const userEmail = userProfile.email?.toLowerCase();
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 7);
+
+    // 회신 대기: 나에게 온 메일 중 회신이 필요한 메일
+    const needsReply = emails.filter(email => 
+      email.recipient?.toLowerCase().includes(userEmail) &&
+      (email.classification === 'task' || email.classification === 'approval')
+    ).length;
+
+    // 금주 회의: 이번 주의 회의 일정
+    const thisWeekMeetings = events.filter(event => {
+      const eventDate = new Date(event.startDate);
+      return eventDate >= startOfWeek && eventDate < endOfWeek &&
+        event.title.toLowerCase().includes('회의');
+    }).length;
+
+    // 선박 이벤트: 호선 번호가 있는 일정
+    const shipEvents = events.filter(event => event.shipNumber).length;
+
+    return {
+      total: emails.length,
+      needsReply,
+      thisWeekMeetings,
+      shipEvents
+    };
+  }, [emails, events, userProfile]);
+
+  // 캘린더 렌더링을 위한 날짜 계산
+  const calendarDays = useMemo(() => {
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const startingDayOfWeek = firstDay.getDay();
+    const daysInMonth = lastDay.getDate();
+
+    const days: (number | null)[] = [];
+    
+    // 이전 달의 빈 칸
+    for (let i = 0; i < startingDayOfWeek; i++) {
+      days.push(null);
+    }
+    
+    // 현재 달의 날짜
+    for (let i = 1; i <= daysInMonth; i++) {
+      days.push(i);
+    }
+
+    return days;
+  }, [currentDate]);
+
+  // 특정 날짜의 일정 가져오기
+  const getEventsForDate = (day: number) => {
+    if (!events) return [];
+    const year = currentDate.getFullYear();
+    const month = currentDate.getMonth();
+    const dateStr = new Date(year, month, day).toISOString().split('T')[0];
+    
+    return events.filter(event => {
+      const eventDate = event.startDate.split(' ')[0];
+      return eventDate === dateStr;
     });
   };
 
-  const toggleEmailExpand = (index: number) => {
-    setExpandedEmails(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(index)) {
-        newSet.delete(index);
-      } else {
-        newSet.add(index);
-      }
-      return newSet;
-    });
+  // 이번 주 일정
+  const thisWeekEvents = useMemo(() => {
+    if (!events) return [];
+    const now = new Date();
+    const startOfWeek = new Date(now);
+    startOfWeek.setDate(now.getDate() - now.getDay());
+    startOfWeek.setHours(0, 0, 0, 0);
+    const endOfWeek = new Date(startOfWeek);
+    endOfWeek.setDate(startOfWeek.getDate() + 7);
+
+    return events
+      .filter(event => {
+        const eventDate = new Date(event.startDate);
+        return eventDate >= startOfWeek && eventDate < endOfWeek;
+      })
+      .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
+      .slice(0, 5);
+  }, [events]);
+
+  const previousMonth = () => {
+    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1));
   };
 
-  const clearSearch = () => {
-    setSearchQuery("");
-    setFilterSender("");
-    setFilterSubject("");
-    setFilterBody("");
-    setFilterStartDate("");
-    setFilterEndDate("");
-    setStartParts({ year: "", month: "", day: "" });
-    setEndParts({ year: "", month: "", day: "" });
-    setFilterOperator("and");
-    setSearchResults(null);
-    setExpandedEmails(new Set());
+  const nextMonth = () => {
+    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1));
   };
 
-  const years = Array.from({ length: 16 }, (_, i) => (2020 + i).toString());
-  const months = Array.from({ length: 12 }, (_, i) => ({ value: (i + 1).toString().padStart(2, "0"), label: `${i + 1}월` }));
-  const getDays = (y: string, m: string) => {
-    if (!y || !m) return Array.from({ length: 31 }, (_, i) => (i + 1).toString().padStart(2, "0"));
-    const last = new Date(parseInt(y, 10), parseInt(m, 10), 0).getDate();
-    return Array.from({ length: last }, (_, i) => (i + 1).toString().padStart(2, "0"));
-  };
-
-  const updateDate = (
-    parts: { year: string; month: string; day: string },
-    setParts: React.Dispatch<React.SetStateAction<{ year: string; month: string; day: string }>>,
-    setFilterDate: React.Dispatch<React.SetStateAction<string>>,
-    field: "year" | "month" | "day",
-    value: string
-  ) => {
-    const next = { ...parts, [field]: value };
-    setParts(next);
-    if (next.year && next.month && next.day) {
-      const iso = `${next.year}-${next.month}-${next.day}`;
-      setFilterDate(iso);
-    }
-  };
-
-  const clearStartDate = () => {
-    setStartParts({ year: "", month: "", day: "" });
-    setFilterStartDate("");
-  };
-
-  const clearEndDate = () => {
-    setEndParts({ year: "", month: "", day: "" });
-    setFilterEndDate("");
+  const today = new Date();
+  const isToday = (day: number) => {
+    return day === today.getDate() && 
+           currentDate.getMonth() === today.getMonth() && 
+           currentDate.getFullYear() === today.getFullYear();
   };
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur-lg supports-[backdrop-filter]:bg-background/60 shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 py-5">
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-4">
-              <div className="rounded-xl bg-gradient-to-br from-primary to-primary/80 p-3 shadow-lg">
-                <Mail className="h-6 w-6 text-primary-foreground" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-bold tracking-tight">이메일 검색</h1>
-                <p className="text-sm text-muted-foreground mt-0.5">PST/JSON 이메일 검색 도구</p>
-              </div>
+      <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="max-w-7xl mx-auto px-4 py-4">
+          <div className="flex items-center gap-3">
+            <div className="rounded-lg bg-primary p-2">
+              <Mail className="h-5 w-5 text-primary-foreground" />
             </div>
-            <div className="flex items-center gap-3 text-sm text-muted-foreground">
-              {stats && (
-                <Badge variant="outline" className="gap-2 px-3 py-1.5 font-medium">
-                  <Database className="h-4 w-4" />
-                  {stats.emailsCount.toLocaleString()}개
-                </Badge>
-              )}
+            <div>
+              <h1 className="text-xl font-bold tracking-tight">홈</h1>
+              <p className="text-xs text-muted-foreground">대시보드</p>
             </div>
           </div>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto px-4 py-8">
-        <Card className="mb-8 shadow-sm">
-          <CardContent className="p-6">
-            <form onSubmit={handleSearch} className="space-y-6">
-              <div className="relative">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground pointer-events-none" />
-                <Input
-                  type="text"
-                  placeholder="검색어를 입력하세요..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="pl-12 pr-4 h-14 text-base border-2 focus:border-primary transition-colors"
-                  data-testid="input-search"
-                />
+      <main className="max-w-7xl mx-auto px-4 py-8 space-y-6">
+        {/* 통계 카드 */}
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <StatCard
+            title="전체 메일"
+            value={stats.total}
+            description="저장된 이메일 수"
+            icon={Mail}
+            loading={emailsLoading}
+          />
+          <StatCard
+            title="회신 대기"
+            value={stats.needsReply}
+            description="답변이 필요한 메일"
+            icon={Clock}
+            loading={emailsLoading}
+          />
+          <StatCard
+            title="금주 회의"
+            value={stats.thisWeekMeetings}
+            description="이번 주 회의 일정"
+            icon={CalendarIcon}
+            loading={eventsLoading}
+          />
+          <StatCard
+            title="선박 이벤트"
+            value={stats.shipEvents}
+            description="호선별 일정"
+            icon={Ship}
+            loading={eventsLoading}
+          />
+        </div>
+
+        <div className="grid gap-6 lg:grid-cols-3">
+          {/* 캘린더 */}
+          <Card className="lg:col-span-2">
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <CardTitle>캘린더</CardTitle>
+                <div className="flex items-center gap-2">
+                  <Button variant="outline" size="icon" onClick={previousMonth}>
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <div className="text-sm font-semibold min-w-[120px] text-center">
+                    {currentDate.getFullYear()}년 {currentDate.getMonth() + 1}월
+                  </div>
+                  <Button variant="outline" size="icon" onClick={nextMonth}>
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
+                </div>
               </div>
-              <div className="space-y-3">
-                <p className="text-sm font-semibold text-foreground">상세검색</p>
-                <div className="rounded-lg border-2 border-dashed p-4 space-y-4 bg-muted/20">
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    <Input
-                      placeholder="발신자"
-                      value={filterSender}
-                      onChange={(e) => setFilterSender(e.target.value)}
-                      data-testid="filter-sender"
-                    />
-                    <Input
-                      placeholder="제목"
-                      value={filterSubject}
-                      onChange={(e) => setFilterSubject(e.target.value)}
-                      data-testid="filter-subject"
-                    />
-                    <Input
-                      placeholder="본문 내용"
-                      value={filterBody}
-                      onChange={(e) => setFilterBody(e.target.value)}
-                      data-testid="filter-body"
-                    />
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          className={cn("justify-start text-left font-normal", !filterStartDate && "text-muted-foreground")}
-                          data-testid="filter-start-date"
+            </CardHeader>
+            <CardContent>
+              {eventsLoading ? (
+                <Skeleton className="h-[400px] w-full" />
+              ) : (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-7 gap-2 mb-2">
+                    {['일', '월', '화', '수', '목', '금', '토'].map((day) => (
+                      <div key={day} className="text-center text-sm font-semibold text-muted-foreground py-2">
+                        {day}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-7 gap-2">
+                    {calendarDays.map((day, index) => {
+                      const dayEvents = day ? getEventsForDate(day) : [];
+                      return (
+                        <div
+                          key={index}
+                          className={`min-h-[80px] p-2 border rounded-lg ${
+                            day === null ? 'bg-muted/30' : 'bg-background hover:bg-muted/50'
+                          } ${isToday(day || 0) ? 'border-primary border-2' : ''}`}
                         >
-                          {filterStartDate ? filterStartDate : "시작일 선택"}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-[280px]" align="start">
-                        <div className="space-y-2 text-sm">
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="font-medium">시작일을 선택하세요</p>
-                            <Button variant="ghost" size="sm" onClick={clearStartDate} data-testid="reset-start-date">
-                              초기화
-                            </Button>
-                          </div>
-                          <div className="grid grid-cols-3 gap-2">
-                            <Select
-                              value={startParts.year}
-                              onValueChange={(v) => updateDate(startParts, setStartParts, setFilterStartDate, "year", v)}
-                            >
-                              <SelectTrigger><SelectValue placeholder="년" /></SelectTrigger>
-                              <SelectContent>
-                                {years.map(y => <SelectItem key={y} value={y}>{y}년</SelectItem>)}
-                              </SelectContent>
-                            </Select>
-                            <Select
-                              value={startParts.month}
-                              onValueChange={(v) => updateDate(startParts, setStartParts, setFilterStartDate, "month", v)}
-                            >
-                              <SelectTrigger><SelectValue placeholder="월" /></SelectTrigger>
-                              <SelectContent>
-                                {months.map(m => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
-                              </SelectContent>
-                            </Select>
-                            <Select
-                              value={startParts.day}
-                              onValueChange={(v) => updateDate(startParts, setStartParts, setFilterStartDate, "day", v)}
-                            >
-                              <SelectTrigger><SelectValue placeholder="일" /></SelectTrigger>
-                              <SelectContent>
-                                {getDays(startParts.year, startParts.month).map(d => <SelectItem key={d} value={d}>{`${parseInt(d,10)}일`}</SelectItem>)}
-                              </SelectContent>
-                            </Select>
-                          </div>
+                          {day !== null && (
+                            <>
+                              <div className={`text-sm font-medium mb-1 ${isToday(day) ? 'text-primary' : ''}`}>
+                                {day}
+                              </div>
+                              <div className="space-y-1">
+                                {dayEvents.slice(0, 2).map((event, i) => (
+                                  <div
+                                    key={i}
+                                    className="text-xs p-1 rounded bg-primary/10 text-primary truncate"
+                                    title={event.title}
+                                  >
+                                    {event.title}
+                                  </div>
+                                ))}
+                                {dayEvents.length > 2 && (
+                                  <div className="text-xs text-muted-foreground">
+                                    +{dayEvents.length - 2}개
+                                  </div>
+                                )}
+                              </div>
+                            </>
+                          )}
                         </div>
-                      </PopoverContent>
-                    </Popover>
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button
-                          variant="outline"
-                          className={cn("justify-start text-left font-normal", !filterEndDate && "text-muted-foreground")}
-                          data-testid="filter-end-date"
-                        >
-                          {filterEndDate ? filterEndDate : "종료일 선택"}
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-[280px]" align="start">
-                        <div className="space-y-2 text-sm">
-                          <div className="flex items-center justify-between gap-2">
-                            <p className="font-medium">종료일을 선택하세요</p>
-                            <Button variant="ghost" size="sm" onClick={clearEndDate} data-testid="reset-end-date">
-                              초기화
-                            </Button>
-                          </div>
-                          <div className="grid grid-cols-3 gap-2">
-                            <Select
-                              value={endParts.year}
-                              onValueChange={(v) => updateDate(endParts, setEndParts, setFilterEndDate, "year", v)}
-                            >
-                              <SelectTrigger><SelectValue placeholder="년" /></SelectTrigger>
-                              <SelectContent>
-                                {years.map(y => <SelectItem key={y} value={y}>{y}년</SelectItem>)}
-                              </SelectContent>
-                            </Select>
-                            <Select
-                              value={endParts.month}
-                              onValueChange={(v) => updateDate(endParts, setEndParts, setFilterEndDate, "month", v)}
-                            >
-                              <SelectTrigger><SelectValue placeholder="월" /></SelectTrigger>
-                              <SelectContent>
-                                {months.map(m => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}
-                              </SelectContent>
-                            </Select>
-                            <Select
-                              value={endParts.day}
-                              onValueChange={(v) => updateDate(endParts, setEndParts, setFilterEndDate, "day", v)}
-                            >
-                              <SelectTrigger><SelectValue placeholder="일" /></SelectTrigger>
-                              <SelectContent>
-                                {getDays(endParts.year, endParts.month).map(d => <SelectItem key={d} value={d}>{`${parseInt(d,10)}일`}</SelectItem>)}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        </div>
-                      </PopoverContent>
-                    </Popover>
-                    <Select value={filterOperator} onValueChange={(v: "and" | "or") => setFilterOperator(v)}>
-                      <SelectTrigger data-testid="filter-operator">
-                        <SelectValue placeholder="AND/OR" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="and">AND (모두 포함)</SelectItem>
-                        <SelectItem value="or">OR (하나라도 포함)</SelectItem>
-                      </SelectContent>
-                    </Select>
+                      );
+                    })}
                   </div>
                 </div>
-              </div>
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-3">
-                  <label htmlFor="topK" className="text-sm font-medium text-foreground whitespace-nowrap">
-                    결과 수:
-                  </label>
-                  <Input
-                    id="topK"
-                    type="number"
-                    min={1}
-                    max={50}
-                    value={topK}
-                    onChange={(e) => setTopK(parseInt(e.target.value) || 10)}
-                    className="w-24 h-10"
-                    data-testid="input-topk"
-                  />
+              )}
+            </CardContent>
+          </Card>
+
+          {/* 이번 주 일정 */}
+          <Card>
+            <CardHeader>
+              <CardTitle>이번 주 일정</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {eventsLoading ? (
+                <div className="space-y-3">
+                  {[1, 2, 3].map((i) => (
+                    <Skeleton key={i} className="h-16 w-full" />
+                  ))}
                 </div>
-                <Button 
-                  type="submit" 
-                  size="lg"
-                  className="flex-1 h-12 text-base font-semibold gap-2 shadow-md hover:shadow-lg transition-all"
-                  disabled={searchMutation.isPending || (!searchQuery.trim() && !hasActiveFilters())}
-                  data-testid="button-search"
-                >
-                  {searchMutation.isPending ? (
-                    <>
-                      <Loader2 className="h-5 w-5 animate-spin" />
-                      검색 중...
-                    </>
-                  ) : (
-                    <>
-                      <Search className="h-5 w-5" />
-                      검색
-                    </>
-                  )}
-                </Button>
-              </div>
-            </form>
-          </CardContent>
-        </Card>
-
-        <section>
-          <div className="flex items-center justify-between gap-4 mb-6">
-            <h2 className="text-2xl font-bold flex items-center gap-3">
-              <div className="rounded-lg bg-primary/10 p-2">
-                <FileText className="h-5 w-5 text-primary" />
-              </div>
-              검색 결과
-            </h2>
-            {searchResults && (
-              <Badge variant="secondary" className="px-3 py-1.5 text-sm font-semibold" data-testid="results-count">
-                {searchResults.citations.length}개 결과
-              </Badge>
-            )}
-          </div>
-
-          {searchMutation.isPending ? (
-            <div className="space-y-4">
-              {[1, 2, 3].map((i) => (
-                <Card key={i}>
-                  <CardContent className="p-4">
-                    <Skeleton className="h-6 w-3/4 mb-2" />
-                    <Skeleton className="h-4 w-1/2 mb-4" />
-                    <Skeleton className="h-16 w-full" />
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : searchResults ? (
-            searchResults.citations.length > 0 ? (
-              <div className="space-y-4" data-testid="search-results">
-                {searchResults.citations.map((result, index) => (
-                  <EmailResultCard
-                    key={`${result.mailId}-${index}`}
-                    result={result}
-                    index={index}
-                    expanded={expandedEmails.has(index)}
-                    onToggle={() => toggleEmailExpand(index)}
-                    onExtract={(emailId) => extractMutation.mutate(emailId)}
-                    isExtracting={extractingEmails.has(parseInt(result.mailId))}
-                  />
-                ))}
-              </div>
-            ) : (
-              <EmptyState
-                icon={AlertCircle}
-                title="검색 결과가 없습니다"
-                description="다른 검색어로 다시 시도해보세요."
-              />
-            )
-          ) : (
-            <EmptyState
-              icon={Search}
-              title="이메일을 검색해보세요"
-              description="검색어를 입력하면 저장된 이메일에서 관련 내용을 찾아드립니다."
-            />
-          )}
-        </section>
-      </main>
-
-      <footer className="border-t mt-16 bg-muted/30">
-        <div className="max-w-7xl mx-auto px-4 py-8">
-          <p className="text-center text-sm text-muted-foreground">
-            PST 이메일 검색 도구 · 2026
-          </p>
+              ) : thisWeekEvents.length > 0 ? (
+                <div className="space-y-3">
+                  {thisWeekEvents.map((event) => (
+                    <div key={event.id} className="p-3 border rounded-lg hover:bg-muted/50 transition-colors">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex-1 min-w-0">
+                          <h4 className="font-semibold text-sm truncate">{event.title}</h4>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {new Date(event.startDate).toLocaleDateString('ko-KR', { 
+                              month: 'short', 
+                              day: 'numeric',
+                              weekday: 'short'
+                            })}
+                          </p>
+                          {event.shipNumber && (
+                            <Badge variant="outline" className="mt-2 text-xs">
+                              {event.shipNumber}
+                            </Badge>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  <CalendarIcon className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                  <p className="text-sm">이번 주 일정이 없습니다</p>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
-      </footer>
+      </main>
     </div>
   );
 }
