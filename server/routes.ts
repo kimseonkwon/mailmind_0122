@@ -19,13 +19,28 @@ import { ZodError } from "zod";
 import { generateEmbedding, normalizeQuestionForRag } from "./ollama";
 
 import { chatWithOllama, extractEventsFromEmail, checkOllamaConnection, classifyEmail, generateEmailChunks, getShipbuildingSystemPrompt } from "./ollama";
-import { parsePSTFromBuffer } from "./pst-parser";
-import { parseEMLFromBuffer } from "./eml-parser";
+import { parsePSTFromBuffer, parsePSTFile } from "./pst-parser";
+import { parseEMLFromBuffer, parseEMLFile } from "./eml-parser";
 import AdmZip from "adm-zip";
+import * as os from "os";
+
+const MEMORY_THRESHOLD = 500 * 1024 * 1024; // 500MB
 
 const upload = multer({ 
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 1024 * 1024 * 1024 }
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => {
+      const uploadDir = path.join(os.tmpdir(), 'mailmind-uploads');
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir, { recursive: true });
+      }
+      cb(null, uploadDir);
+    },
+    filename: (req, file, cb) => {
+      const uniqueName = `${Date.now()}_${file.originalname}`;
+      cb(null, uniqueName);
+    }
+  }),
+  limits: { fileSize: 50 * 1024 * 1024 * 1024 } // 50GB
 });
 
 function parseEmailsFromJson(content: string): Array<{
@@ -158,12 +173,26 @@ export async function registerRoutes(
 
         if (ext === "json") {
           console.log("JSON 파일 파싱 시작...");
-          const content = file.buffer.toString("utf-8");
+          const content = fs.readFileSync(file.path, "utf-8");
           emailsToImport = parseEmailsFromJson(content);
           console.log(`JSON에서 ${emailsToImport.length}개 이메일 파싱됨`);
+          // 임시 파일 삭제
+          try { fs.unlinkSync(file.path); } catch {}
         } else if (ext === "pst") {
           console.log("PST 파일 파싱 시작...");
-          const parseResult = await parsePSTFromBuffer(file.buffer, filename);
+          const fileStats = fs.statSync(file.path);
+          console.log(`파일 크기: ${(fileStats.size / 1024 / 1024).toFixed(2)}MB`);
+          
+          let parseResult;
+          if (fileStats.size <= MEMORY_THRESHOLD) {
+            console.log("메모리 기반 처리 (< 500MB)");
+            const buffer = fs.readFileSync(file.path);
+            parseResult = await parsePSTFromBuffer(buffer, filename);
+          } else {
+            console.log("디스크 기반 처리 (>= 500MB)");
+            parseResult = await parsePSTFile(file.path);
+          }
+          
           console.log(`PST 파싱 결과: ${parseResult.emails.length}개 이메일, ${parseResult.errors.length}개 오류`);
           
           if (parseResult.errors.length > 0 && parseResult.emails.length === 0) {
@@ -173,12 +202,28 @@ export async function registerRoutes(
               inserted: 0,
               message: `PST 파일 파싱 오류: ${parseResult.errors.join(", ")}`,
             });
+            // 임시 파일 삭제
+            try { fs.unlinkSync(file.path); } catch {}
             return;
           }
           emailsToImport = parseResult.emails;
+          // 임시 파일 삭제
+          try { fs.unlinkSync(file.path); } catch {}
         } else if (ext === "eml") {
           console.log("EML 파일 파싱 시작...");
-          const parseResult = await parseEMLFromBuffer(file.buffer, filename);
+          const fileStats = fs.statSync(file.path);
+          console.log(`파일 크기: ${(fileStats.size / 1024 / 1024).toFixed(2)}MB`);
+          
+          let parseResult;
+          if (fileStats.size <= MEMORY_THRESHOLD) {
+            console.log("메모리 기반 처리 (< 500MB)");
+            const buffer = fs.readFileSync(file.path);
+            parseResult = await parseEMLFromBuffer(buffer, filename);
+          } else {
+            console.log("디스크 기반 처리 (>= 500MB)");
+            parseResult = await parseEMLFile(file.path);
+          }
+          
           console.log(`EML 파싱 결과: ${parseResult.emails.length}개 이메일, ${parseResult.errors.length}개 오류`);
           
           if (parseResult.errors.length > 0 && parseResult.emails.length === 0) {
@@ -188,13 +233,29 @@ export async function registerRoutes(
               inserted: 0,
               message: `EML 파일 파싱 오류: ${parseResult.errors.join(", ")}`,
             });
+            // 임시 파일 삭제
+            try { fs.unlinkSync(file.path); } catch {}
             return;
           }
           emailsToImport = parseResult.emails;
+          // 임시 파일 삭제
+          try { fs.unlinkSync(file.path); } catch {}
         } else if (ext === "zip" || mimeType.includes("zip")) {
           console.log("ZIP 파일 압축 해제 시작...");
           try {
-            const zip = new AdmZip(file.buffer);
+            const fileStats = fs.statSync(file.path);
+            console.log(`파일 크기: ${(fileStats.size / 1024 / 1024).toFixed(2)}MB`);
+            
+            let zipBuffer: Buffer;
+            if (fileStats.size <= MEMORY_THRESHOLD) {
+              console.log("메모리 기반 처리 (< 500MB)");
+              zipBuffer = fs.readFileSync(file.path);
+            } else {
+              console.log("디스크 기반 처리 (>= 500MB)");
+              zipBuffer = fs.readFileSync(file.path);
+            }
+            
+            const zip = new AdmZip(zipBuffer);
             const zipEntries = zip.getEntries();
             const emlFiles = zipEntries.filter(entry => 
               !entry.isDirectory && entry.entryName.toLowerCase().endsWith('.eml')
@@ -230,16 +291,22 @@ export async function registerRoutes(
                 inserted: 0,
                 message: `ZIP 파일에서 이메일을 찾을 수 없습니다. ${errors.length > 0 ? '오류: ' + errors.slice(0, 3).join(', ') : ''}`,
               });
+              // 임시 파일 삭제
+              try { fs.unlinkSync(file.path); } catch {}
               return;
             }
             
             emailsToImport = allEmails;
+            // 임시 파일 삭제
+            try { fs.unlinkSync(file.path); } catch {}
             if (errors.length > 0) {
               console.warn(`경고: ${errors.length}개 파일 처리 중 오류 발생`);
             }
           } catch (err) {
             const errMsg = err instanceof Error ? err.message : "Unknown error";
             console.error("ZIP 파일 처리 오류:", errMsg);
+            // 임시 파일 삭제
+            try { if (file?.path) fs.unlinkSync(file.path); } catch {}
             res.status(400).json({
               ok: false,
               inserted: 0,
@@ -248,6 +315,8 @@ export async function registerRoutes(
             return;
           }
         } else if (ext === "mbox") {
+          // 임시 파일 삭제
+          try { fs.unlinkSync(file.path); } catch {}
           res.status(400).json({
             ok: false,
             inserted: 0,
@@ -255,6 +324,8 @@ export async function registerRoutes(
           });
           return;
         } else {
+          // 임시 파일 삭제
+          try { fs.unlinkSync(file.path); } catch {}
           res.status(400).json({
             ok: false,
             inserted: 0,

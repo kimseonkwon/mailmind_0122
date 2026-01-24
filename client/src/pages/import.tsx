@@ -156,7 +156,7 @@ function UploadDropzone({
                 파일을 드래그하거나 클릭하세요
               </p>
               <p className="text-sm text-muted-foreground mb-4">
-                PST, EML, ZIP(EML폴더), JSON 파일 지원 (최대 1GB)
+                PST, EML, ZIP(EML폴더), JSON 파일 지원 (최대 50GB)
               </p>
               <div className="flex gap-2">
                 <Badge variant="outline">PST</Badge>
