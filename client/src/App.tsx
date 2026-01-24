@@ -28,8 +28,8 @@ function Navigation() {
   ];
   
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 border-t bg-background/95 backdrop-blur-lg supports-[backdrop-filter]:bg-background/60 md:relative md:border-t-0 md:border-r md:h-screen md:w-20">
-      <div className="flex md:flex-col items-center justify-around md:justify-start md:pt-6 gap-1 p-2 md:gap-2">
+    <nav className="fixed bottom-0 left-0 right-0 z-[9999] border-t bg-background/95 backdrop-blur-lg supports-[backdrop-filter]:bg-background/60 md:relative md:border-t-0 md:border-r md:h-screen md:w-20 overflow-visible">
+      <div className="flex md:flex-col items-center justify-around md:justify-start md:pt-6 gap-1 p-2 md:gap-2 overflow-visible">
         {navItems.map((item) => {
           const Icon = item.icon;
           const isActive = location === item.href;
@@ -44,7 +44,7 @@ function Navigation() {
                 data-testid={item.testId}
               >
                 <Icon className="h-5 w-5" />
-                <span className="absolute left-full ml-3 px-2 py-1 bg-foreground text-background text-xs rounded-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap hidden md:block pointer-events-none">
+                <span className="fixed ml-3 px-2 py-1 bg-foreground text-background text-xs rounded-md opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap hidden md:block pointer-events-none z-[9999] shadow-lg" style={{ left: 'calc(5rem + 0.75rem)' }}>
                   {item.label}
                 </span>
               </Button>
@@ -77,7 +77,7 @@ function App() {
       <TooltipProvider>
         <div className="flex flex-col-reverse md:flex-row">
           <Navigation />
-          <main className="flex-1 pb-16 md:pb-0">
+          <main className="flex-1 pb-16 md:pb-0 relative z-0">
             <Router />
           </main>
         </div>
