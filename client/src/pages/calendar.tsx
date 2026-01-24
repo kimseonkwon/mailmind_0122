@@ -121,7 +121,6 @@ export default function CalendarPage() {
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('calendar');
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set());
   const [selectedShips, setSelectedShips] = useState<Set<string>>(new Set());
-  const [filterMyShips, setFilterMyShips] = useState(false);
 
   const { data: events, isLoading } = useQuery<CalendarEvent[]>({
     queryKey: ["/api/events"],
@@ -140,25 +139,8 @@ export default function CalendarPage() {
     
     let filtered = events;
 
-    // 카테고리 필터
-    if (selectedCategories.size > 0) {
-      filtered = filtered.filter(event => {
-        const category = getEventCategory(event.title);
-        return selectedCategories.has(category.keyword);
-      });
-    }
-
-    // 호선 필터
-    if (selectedShips.size > 0) {
-      filtered = filtered.filter(event => {
-        if (!event.shipNumber) return false;
-        const eventShips = event.shipNumber.split(',').map(s => s.trim());
-        return eventShips.some(ship => selectedShips.has(ship));
-      });
-    }
-
-    // 담당 호선 필터
-    if (filterMyShips && userProfile?.shipNumbers) {
+    // 담당 호선 필터 (기본)
+    if (userProfile?.shipNumbers) {
       const myShips = userProfile.shipNumbers
         .split(',')
         .map(s => s.trim().toUpperCase())
@@ -177,8 +159,25 @@ export default function CalendarPage() {
       });
     }
 
+    // 카테고리 필터
+    if (selectedCategories.size > 0) {
+      filtered = filtered.filter(event => {
+        const category = getEventCategory(event.title);
+        return selectedCategories.has(category.keyword);
+      });
+    }
+
+    // 호선 필터
+    if (selectedShips.size > 0) {
+      filtered = filtered.filter(event => {
+        if (!event.shipNumber) return false;
+        const eventShips = event.shipNumber.split(',').map(s => s.trim());
+        return eventShips.some(ship => selectedShips.has(ship));
+      });
+    }
+
     return filtered;
-  }, [events, selectedCategories, selectedShips, filterMyShips, userProfile]);
+  }, [events, selectedCategories, selectedShips, userProfile]);
 
   const eventsByDate = useMemo(() => {
     const map = new Map<string, CalendarEvent[]>();
@@ -321,7 +320,7 @@ export default function CalendarPage() {
 
             <div className="mt-6 pt-6 border-t">
               <div className="flex items-center justify-between mb-3">
-                <h3 className="font-semibold text-base">호선</h3>
+                <h3 className="font-semibold text-base">담당 호선</h3>
                 {selectedShips.size > 0 && (
                   <button
                     onClick={() => setSelectedShips(new Set())}
@@ -331,55 +330,45 @@ export default function CalendarPage() {
                   </button>
                 )}
               </div>
-              {ships && ships.length > 0 ? (
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant={filterMyShips ? 'default' : 'outline'}
-                    onClick={() => {
-                      const newFilterState = !filterMyShips;
-                      setFilterMyShips(newFilterState);
-                      // 담당 호선 필터를 끄면 선택된 호선 초기화
-                      if (!newFilterState) {
-                        setSelectedShips(new Set());
-                      }
-                    }}
-                    className="gap-2"
-                  >
-                    담당 호선
-                  </Button>
-                  {ships.map((ship) => {
-                    const isSelected = selectedShips.has(ship);
-                    
-                    // 담당 호선 필터가 활성화되어 있을 때
-                    let isActive: boolean;
-                    if (filterMyShips && userProfile?.shipNumbers) {
-                      const myShips = userProfile.shipNumbers.split(',').map(s => s.trim()).filter(Boolean);
-                      isActive = myShips.some(myShip => ship.toLowerCase().includes(myShip.toLowerCase()));
-                    } else {
-                      // 일반 필터 모드
-                      isActive = selectedShips.size === 0 || isSelected;
-                    }
-                    
-                    return (
-                      <button
-                        key={ship}
-                        onClick={() => toggleShip(ship)}
-                        className={`px-4 py-2 text-sm font-medium rounded-lg border-2 transition-all ${
-                          isActive
-                            ? 'border-primary bg-primary text-primary-foreground shadow-sm'
-                            : 'border-border bg-background text-muted-foreground opacity-40 hover:opacity-70'
-                        }`}
-                      >
-                        {ship}
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  이메일에서 추출된 호선이 없습니다. 일정을 추가하면 자동으로 호선이 표시됩니다.
-                </p>
-              )}
+              {(() => {
+                // 사용자의 담당 호선만 필터링
+                const myShips = userProfile?.shipNumbers
+                  ? userProfile.shipNumbers.split(',').map(s => s.trim()).filter(Boolean)
+                  : [];
+                
+                const filteredShips = ships?.filter(ship => 
+                  myShips.some(myShip => ship.toLowerCase().includes(myShip.toLowerCase()))
+                ) || [];
+
+                return filteredShips.length > 0 ? (
+                  <div className="flex flex-wrap gap-2">
+                    {filteredShips.map((ship) => {
+                      const isSelected = selectedShips.has(ship);
+                      const isActive = selectedShips.size === 0 || isSelected;
+                      
+                      return (
+                        <button
+                          key={ship}
+                          onClick={() => toggleShip(ship)}
+                          className={`px-4 py-2 text-sm font-medium rounded-lg border-2 transition-all ${
+                            isActive
+                              ? 'border-primary bg-primary text-primary-foreground shadow-sm'
+                              : 'border-border bg-background text-muted-foreground opacity-40 hover:opacity-70'
+                          }`}
+                        >
+                          {ship}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    {userProfile?.shipNumbers 
+                      ? "담당 호선과 일치하는 일정이 없습니다. 설정에서 담당 호선을 확인하세요."
+                      : "설정에서 담당 호선을 먼저 등록하세요."}
+                  </p>
+                );
+              })()}
             </div>
           </CardContent>
         </Card>
