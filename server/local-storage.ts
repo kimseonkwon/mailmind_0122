@@ -421,7 +421,7 @@ export class LocalSQLiteStorage implements IStorage {
   }
 
   async searchEmails(query: string, topK: number, filters?: SearchFilters): Promise<SearchResult[]> {
-    const combinedText = `${query} ${(filters?.sender || "")} ${(filters?.subject || "")} ${(filters?.body || "")} ${(filters?.startDate || "")} ${(filters?.endDate || "")}`;
+    const combinedText = `${query} ${(filters?.sender || "")} ${(filters?.recipient || "")} ${(filters?.subject || "")} ${(filters?.body || "")} ${(filters?.startDate || "")} ${(filters?.endDate || "")}`;
     const tokens = tokenize(combinedText);
     if (tokens.length === 0) return [];
 
@@ -436,11 +436,12 @@ export class LocalSQLiteStorage implements IStorage {
     };
 
     if (query.trim()) {
-      clauses.push(`(subject LIKE ? OR body LIKE ? OR sender LIKE ? OR date LIKE ?)`);
-      params.push(`%${query.trim()}%`, `%${query.trim()}%`, `%${query.trim()}%`, `%${query.trim()}%`);
+      clauses.push(`(subject LIKE ? OR body LIKE ? OR sender LIKE ? OR recipient LIKE ? OR date LIKE ?)`);
+      params.push(`%${query.trim()}%`, `%${query.trim()}%`, `%${query.trim()}%`, `%${query.trim()}%`, `%${query.trim()}%`);
     }
 
     addClause("sender", filters?.sender);
+    addClause("recipient", filters?.recipient);
     addClause("subject", filters?.subject);
     addClause("body", filters?.body);
     if (filters?.startDate && filters.startDate.trim()) {

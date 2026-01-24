@@ -185,6 +185,7 @@ export default function SearchPage() {
   const [searchResults, setSearchResults] = useState<ChatResponse | null>(null);
   const [extractingEmails, setExtractingEmails] = useState<Set<number>>(new Set());
   const [filterSender, setFilterSender] = useState("");
+  const [filterRecipient, setFilterRecipient] = useState("");
   const [filterSubject, setFilterSubject] = useState("");
   const [filterBody, setFilterBody] = useState("");
   const [filterStartDate, setFilterStartDate] = useState("");
@@ -254,7 +255,7 @@ export default function SearchPage() {
     },
   });
 
-  const hasActiveFilters = () => [filterSender, filterSubject, filterBody, filterStartDate, filterEndDate].some(v => v.trim().length > 0);
+  const hasActiveFilters = () => [filterSender, filterRecipient, filterSubject, filterBody, filterStartDate, filterEndDate].some(v => v.trim().length > 0);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -271,6 +272,7 @@ export default function SearchPage() {
       topK,
       filters: {
         sender: filterSender || undefined,
+        recipient: filterRecipient || undefined,
         subject: filterSubject || undefined,
         body: filterBody || undefined,
         startDate: filterStartDate || undefined,
@@ -368,13 +370,19 @@ export default function SearchPage() {
               </div>
               <div className="space-y-3">
                 <p className="text-sm font-semibold text-foreground">상세검색</p>
-                <div className="rounded-lg border-2 border-dashed p-4 space-y-4 bg-muted/20">
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div className="rounded-lg border-2 border-dashed p-4 space-y-3 bg-muted/20">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
                     <Input
                       placeholder="발신자"
                       value={filterSender}
                       onChange={(e) => setFilterSender(e.target.value)}
                       data-testid="filter-sender"
+                    />
+                    <Input
+                      placeholder="수신자"
+                      value={filterRecipient}
+                      onChange={(e) => setFilterRecipient(e.target.value)}
+                      data-testid="filter-recipient"
                     />
                     <Input
                       placeholder="제목"
@@ -388,11 +396,14 @@ export default function SearchPage() {
                       onChange={(e) => setFilterBody(e.target.value)}
                       data-testid="filter-body"
                     />
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <Popover>
                       <PopoverTrigger asChild>
                         <Button
                           variant="outline"
-                          className={cn("justify-start text-left font-normal", !filterStartDate && "text-muted-foreground")}
+                          size="sm"
+                          className={cn("justify-start text-left font-normal h-9", !filterStartDate && "text-muted-foreground")}
                           data-testid="filter-start-date"
                         >
                           {filterStartDate ? filterStartDate : "시작일 선택"}
@@ -442,7 +453,8 @@ export default function SearchPage() {
                       <PopoverTrigger asChild>
                         <Button
                           variant="outline"
-                          className={cn("justify-start text-left font-normal", !filterEndDate && "text-muted-foreground")}
+                          size="sm"
+                          className={cn("justify-start text-left font-normal h-9", !filterEndDate && "text-muted-foreground")}
                           data-testid="filter-end-date"
                         >
                           {filterEndDate ? filterEndDate : "종료일 선택"}
@@ -489,7 +501,7 @@ export default function SearchPage() {
                       </PopoverContent>
                     </Popover>
                     <Select value={filterOperator} onValueChange={(v: "and" | "or") => setFilterOperator(v)}>
-                      <SelectTrigger data-testid="filter-operator">
+                      <SelectTrigger data-testid="filter-operator" className="h-9">
                         <SelectValue placeholder="AND/OR" />
                       </SelectTrigger>
                       <SelectContent>

@@ -70,6 +70,7 @@ export type Stats = z.infer<typeof statsSchema>;
 
 export const searchFiltersSchema = z.object({
   sender: z.string().optional(),
+  recipient: z.string().optional(),
   subject: z.string().optional(),
   body: z.string().optional(),
   startDate: z.string().optional(),
