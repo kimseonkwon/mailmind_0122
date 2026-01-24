@@ -138,22 +138,41 @@ export default function Home() {
     return days;
   }, [currentDate]);
 
-  // 특정 날짜의 일정 가져오기
+  // 특정 날짜의 일정 가져오기 (담당 호선 필터링 적용)
   const getEventsForDate = (day: number) => {
-    if (!events) return [];
+    if (!events || !userProfile) return [];
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
-    const dateStr = new Date(year, month, day).toISOString().split('T')[0];
+    // UTC 변환 없이 로컬 날짜로 비교
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    
+    // 담당 호선 목록
+    const myShips = userProfile.shipNumbers
+      ? userProfile.shipNumbers.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
+      : [];
     
     return events.filter(event => {
-      const eventDate = event.startDate.split(' ')[0];
-      return eventDate === dateStr;
+      // 날짜 비교
+      const eventDate = event.startDate.split(' ')[0]; // "YYYY-MM-DD HH:MM:SS"에서 날짜 부분만
+      if (eventDate !== dateStr) return false;
+      
+      // 호선 필터링: 호선 번호가 없는 일정은 표시, 있으면 담당 호선만 표시
+      if (!event.shipNumber) return true;
+      
+      const eventShips = event.shipNumber.split(',').map(s => s.trim().toUpperCase());
+      return eventShips.some(ship => 
+        myShips.some(myShip => 
+          ship === myShip || 
+          ship.includes(myShip) || 
+          myShip.includes(ship)
+        )
+      );
     });
   };
 
-  // 이번 주 일정
+  // 이번 주 일정 (담당 호선 필터링 적용)
   const thisWeekEvents = useMemo(() => {
-    if (!events) return [];
+    if (!events || !userProfile) return [];
     const now = new Date();
     const startOfWeek = new Date(now);
     startOfWeek.setDate(now.getDate() - now.getDay());
@@ -161,14 +180,32 @@ export default function Home() {
     const endOfWeek = new Date(startOfWeek);
     endOfWeek.setDate(startOfWeek.getDate() + 7);
 
+    // 담당 호선 목록
+    const myShips = userProfile.shipNumbers
+      ? userProfile.shipNumbers.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
+      : [];
+
     return events
       .filter(event => {
+        // 날짜 필터링
         const eventDate = new Date(event.startDate);
-        return eventDate >= startOfWeek && eventDate < endOfWeek;
+        if (eventDate < startOfWeek || eventDate >= endOfWeek) return false;
+        
+        // 호선 필터링: 호선 번호가 없는 일정은 표시, 있으면 담당 호선만 표시
+        if (!event.shipNumber) return true;
+        
+        const eventShips = event.shipNumber.split(',').map(s => s.trim().toUpperCase());
+        return eventShips.some(ship => 
+          myShips.some(myShip => 
+            ship === myShip || 
+            ship.includes(myShip) || 
+            myShip.includes(ship)
+          )
+        );
       })
       .sort((a, b) => new Date(a.startDate).getTime() - new Date(b.startDate).getTime())
       .slice(0, 5);
-  }, [events]);
+  }, [events, userProfile]);
 
   const previousMonth = () => {
     setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1));
